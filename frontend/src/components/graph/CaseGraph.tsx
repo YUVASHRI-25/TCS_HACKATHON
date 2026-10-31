@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
 import fcose from "cytoscape-fcose";
 import { Maximize2, Pause, Play } from "lucide-react";
-import type { CaseGraph as CaseGraphData, GraphNode } from "@/api/client";
+import type { CaseGraph as CaseGraphData, GraphEdge, GraphNode } from "@/api/client";
 import { useNeighbors } from "@/hooks/useApi";
 import { NODE_STYLE, VIZ } from "@/lib/viz";
 import { humanize, num, ts } from "@/lib/format";
@@ -20,6 +20,7 @@ export function CaseGraph({ caseId, data }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Core | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [selEdge, setSelEdge] = useState<(GraphEdge & { n_txns?: number | null; provenance?: string | null }) | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [expand, setExpand] = useState<string | null>(null);
   const neighbors = useNeighbors(expand, 1);
@@ -61,6 +62,7 @@ export function CaseGraph({ caseId, data }: Props) {
         { selector: "edge.transfer", style: { "target-arrow-shape": "triangle", "target-arrow-color": VIZ.neutral, "arrow-scale": 0.6 } },
         { selector: "edge.link", style: { "line-style": "dashed" } },
         { selector: "edge.suspicious", style: { width: 2, "line-color": VIZ.contrast, "target-arrow-color": VIZ.contrast, opacity: 0.95 } },
+        { selector: "edge:selected", style: { width: 3, "line-color": "#172554", "target-arrow-color": "#172554", opacity: 1 } },
         { selector: ".faded", style: { display: "none" } },
       ],
       layout: { name: "fcose", animate: false, randomize: true, nodeRepulsion: 8000, idealEdgeLength: 70 } as never,
@@ -68,8 +70,9 @@ export function CaseGraph({ caseId, data }: Props) {
     // Cytoscape only listens to window resizes; follow the panel (chat docking, panel drag) as well.
     const ro = new ResizeObserver(() => { inst.resize(); });
     ro.observe(box.current);
-    inst.on("tap", "node", (evt) => setSelected(evt.target.data() as GraphNode));
-    inst.on("tap", (evt) => evt.target === inst && setSelected(null));
+    inst.on("tap", "node", (evt) => { setSelEdge(null); setSelected(evt.target.data() as GraphNode); });
+    inst.on("tap", "edge", (evt) => { setSelected(null); setSelEdge(evt.target.data()); });
+    inst.on("tap", (evt) => { if (evt.target === inst) { setSelected(null); setSelEdge(null); } });
     cy.current = inst;
     return () => { ro.disconnect(); inst.destroy(); };
   }, [data]);
@@ -148,6 +151,18 @@ export function CaseGraph({ caseId, data }: Props) {
       <div className="relative min-h-0 flex-1">
         <div ref={box} className="absolute inset-0" role="img" aria-label={`Network graph with ${data.nodes.length} entities and ${data.edges.length} links`} />
         {data.truncated && <p className="absolute left-2 top-2 rounded bg-amber-500/20 px-2 py-1 text-[11px] text-amber-200">Showing the first 2,000 transactions (cited ones first)</p>}
+        {selEdge && (
+          <div className="absolute right-2 top-2 w-72 rounded-lg border border-line bg-panel/95 p-3 text-xs shadow-xl">
+            <div className="mb-1 flex items-center gap-2"><Badge tone="blue">{humanize(selEdge.type)}</Badge>{selEdge.suspicious && <Badge tone="red">cited in evidence</Badge>}</div>
+            <p className="break-all font-mono">{selEdge.source.split(":").slice(1).join(":")} to {selEdge.target.split(":").slice(1).join(":")}</p>
+            {selEdge.amount != null && <p className="mt-1">Amount: <span className="font-mono">{num(selEdge.amount)}</span>{selEdge.n_txns && selEdge.n_txns > 1 ? ` across ${selEdge.n_txns} transactions` : ""}</p>}
+            {selEdge.ts && <p>Time: <span className="font-mono">{ts(selEdge.ts)}</span></p>}
+            {selEdge.txn_id && <p>Transaction: <span className="font-mono">{selEdge.txn_id}</span></p>}
+            {selEdge.confidence != null && <p>Link confidence: <span className="font-mono">{selEdge.confidence}</span> (possible relation, not a merge)</p>}
+            {selEdge.provenance && <p className="text-muted">Source record: {selEdge.provenance}</p>}
+            {(selEdge.evidence_ids ?? []).length > 0 && <div className="mt-2"><EvidenceChips caseId={caseId} ids={selEdge.evidence_ids} /></div>}
+          </div>
+        )}
         {selected && (
           <div className="absolute right-2 top-2 w-72 rounded-lg border border-line bg-panel/95 p-3 text-xs shadow-xl">
             <div className="mb-1 flex items-center gap-2">

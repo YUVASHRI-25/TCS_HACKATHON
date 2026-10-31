@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { FolderPlus } from "lucide-react";
-import { useCreateCase, useEntitySearch, useNeighbors } from "@/hooks/useApi";
+import { useCases, useCreateCase, useEntitySearch, useNeighbors } from "@/hooks/useApi";
 import { CaseGraph } from "@/components/graph/CaseGraph";
 import { Button, Card, EmptyState, ErrorState, SkeletonRows } from "@/components/ui/primitives";
 import type { CaseGraph as CaseGraphData } from "@/api/client";
 
-interface RawGraph { nodes: { id: string; type?: string; derived?: boolean }[]; edges: { source: string; target: string; type: string; confidence?: number }[] }
+interface RawGraph { nodes: { id: string; type?: string; derived?: boolean }[]; edges: { source: string; target: string; type: string; confidence?: number; amount?: number; n_txns?: number; first_ts?: string; provenance?: { table: string; row: number } | null }[] }
 
 function CreateCasePanel({ accounts, centre }: { accounts: string[]; centre: string }) {
   const navigate = useNavigate();
@@ -45,11 +45,13 @@ function CreateCasePanel({ accounts, centre }: { accounts: string[]; centre: str
 
 export function ExplorerPage() {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const node = params.get("node");
   const [hops, setHops] = useState(1);
   const [q, setQ] = useState("");
   const search = useEntitySearch(q);
   const nb = useNeighbors(node, hops);
+  const flagged = useCases({});
 
   const graph = useMemo<CaseGraphData | null>(() => {
     const raw = nb.data as RawGraph | undefined;
@@ -59,7 +61,8 @@ export function ExplorerPage() {
       nodes: raw.nodes.map((n) => ({ id: n.id, type: n.type ?? "entity", label: n.id.split(":").slice(1).join(":"),
         role: n.id === node ? "member" : "related", derived: !!n.derived, risk: 0, suspicious: false, evidence_ids: [] })),
       edges: raw.edges.map((e, i) => ({ id: `e${i}`, source: e.source, target: e.target, type: e.type, suspicious: false,
-        evidence_ids: [], confidence: e.confidence ?? null })),
+        evidence_ids: [], confidence: e.confidence ?? null, amount: e.amount ?? null, ts: e.first_ts ?? null,
+        n_txns: e.n_txns ?? null, provenance: e.provenance ? `${e.provenance.table} row ${e.provenance.row}` : null } as CaseGraphData["edges"][number])),
     };
   }, [nb.data, node]);
   const accounts = useMemo(() => (graph?.nodes ?? []).filter((n) => n.type === "account").map((n) => n.id).sort(), [graph]);
@@ -75,19 +78,33 @@ export function ExplorerPage() {
             <option value={1}>1</option><option value={2}>2</option>
           </select>
         </label>
-        {node && <span className="font-mono text-xs text-muted">centre: {node}</span>}
+        {node && <span className="font-mono text-xs text-muted">centre: {node}{graph ? ` · ${graph.nodes.length} entities · ${graph.edges.length} links` : ""}</span>}
       </div>
       {q && (
         <ul className="flex flex-wrap gap-1.5">
           {(search.data ?? []).map((e) => (
             <li key={e.id}><button type="button" onClick={() => { setParams({ node: e.id }); setQ(""); }}
-              className="rounded border border-line px-2 py-0.5 font-mono text-xs hover:bg-slate-700/50">{e.id}</button></li>
+              className="rounded border border-line px-2 py-0.5 font-mono text-xs hover:bg-slate-700/50">{e.id}{e.type ? <span className="ml-1 text-muted">· {e.type}</span> : null}</button></li>
           ))}
           {search.data?.length === 0 && <li className="text-xs text-muted">No entity matches</li>}
         </ul>
       )}
       <Card className="[&>div]:p-0">
-        {!node && <EmptyState title="Search for an entity to explore its neighbourhood" />}
+        {!node && (
+          <div className="p-6">
+            <EmptyState title="Search for an entity to explore its neighbourhood" />
+            <p className="mt-2 text-center text-xs text-muted">Search by account, customer, device, IP, merchant or beneficiary id (e.g. a few digits of an id), or start from a flagged network:</p>
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+              {(flagged.data ?? []).slice(0, 8).map((c) => (
+                <button key={c.id} type="button" onClick={() => navigate(`/cases/${c.id}`)}
+                  className="rounded border border-line px-2 py-1 text-xs hover:bg-sky-500/10">
+                  <span className="font-mono">{c.id}</span> · {c.tier} · {c.priority_score}
+                </button>
+              ))}
+              {flagged.isError && <ErrorState error={flagged.error} />}
+            </div>
+          </div>
+        )}
         {node && nb.isLoading && <div className="p-4"><SkeletonRows /></div>}
         {node && nb.isError && <div className="p-4"><ErrorState error={nb.error} /></div>}
         {graph && <div className="h-[32rem]"><CaseGraph caseId="" data={graph} /></div>}

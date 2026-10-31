@@ -20,7 +20,9 @@ class NetworkxGraphStore(GraphStore):
         ids = self.tg.neighbors(node_id, hops)
         sub = self.tg.g.subgraph(ids)
         nodes = [{"id": n, **{k: v for k, v in d.items()}} for n, d in sub.nodes(data=True)]
-        edges = [{"source": u, "target": v, **d} for u, v, d in sub.edges(data=True)]
+        # Edge attributes carry their own "source" (raw-row provenance); keep it separate from the node endpoints.
+        edges = [{**{k: v for k, v in d.items() if k != "source"}, "provenance": d.get("source"), "source": u, "target": v}
+                 for u, v, d in sub.edges(data=True)]
         return {"nodes": nodes, "edges": edges}
 
     def search(self, q: str, limit: int = 20) -> list[dict[str, Any]]:
