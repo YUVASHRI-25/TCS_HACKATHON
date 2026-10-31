@@ -48,9 +48,16 @@ def describe(f: Finding) -> str:
     elif t == "flagged_merchant":
         s = f"Account {d['account']} made {d['payments']} payment(s) totalling {_n(d['amount_total'])} to flagged merchant(s)."
     elif t == "complaint_cluster":
-        s = f"{d['complaints']} complaints about {d['subject']} within one window (dataset threshold {_n(d['threshold'])})."
+        cats = f" ({', '.join(map(str, d['categories']))})" if d.get("categories") else ""
+        s = (f"{d['complaints']} complaints{cats} about {d['subject']} within one window "
+             f"(dataset threshold {_n(d['threshold'])}).")
     elif t == "prior_escalation":
-        s = f"{d['subject']} has prior alert(s) with outcome {', '.join(map(str, d['outcomes']))}."
+        rules = f" (alert rules: {', '.join(map(str, d['rules']))})" if d.get("rules") else ""
+        s = f"{d['subject']} has {len(d['alerts'])} prior alert(s){rules}: {'; '.join(map(str, d['reasons']))}."
+    elif t == "sanctions_potential_match" and "entity" in d:
+        conf = f", highest confidence {d['max_confidence']:.2f}" if d.get("max_confidence") is not None else ""
+        s = (f"{d['entity']} has {len(d['matches'])} screening hit(s) on {', '.join(map(str, d['list_types']))} "
+             f"(match type {', '.join(map(str, d['match_types'])) or 'n/a'}{conf}); potential match requiring human review.")
     elif t == "sanctions_potential_match":
         s = (f"Customer {d['customer']} name is a potential match (score {d['name_score']:.0f}) to watchlist entry "
              f"{d['watchlist_entry']}; potential match requiring human review.")

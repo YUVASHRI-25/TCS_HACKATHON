@@ -1,9 +1,14 @@
-"""Circular flows of length min_length..max_length that are time-respecting and amount-similar."""
+"""Circular flows: time-respecting, same-currency, amount-similar loops of length min..max.
+
+Searched along transactions (temporal DFS), not over the static graph: on dense transfer graphs the
+number of static cycles explodes, while a loop of money must also move forward in time, stay in one
+currency and keep similar amounts, which prunes the search sharply.
+"""
 
 from __future__ import annotations
 
-import networkx as nx
 import numpy as np
+import pandas as pd
 
 from trace.domain.detectors.base import DetectorContext, DetectorResult, fmt_cypher, register, ts_seconds
 from trace.domain.model.findings import Finding, node_id
@@ -11,10 +16,9 @@ from trace.domain.model.findings import Finding, node_id
 CYPHER_CYCLE = ("MATCH p=(a:Account {id:$start})-[:TRANSFERS_TO*$min_length..$max_length]->(a)\n"
                 "WHERE all(i IN range(0, size(relationships(p))-2)\n"
                 "      WHERE relationships(p)[i].ts <= relationships(p)[i+1].ts)\n"
+                "  AND all(r IN relationships(p) WHERE r.currency = head(relationships(p)).currency)\n"
                 "  AND last(relationships(p)).ts - head(relationships(p)).ts <= duration({minutes:$max_span_minutes})\n"
                 "RETURN p")
-
-_MAX_STARTS = 50  # earliest candidate start transactions tried per cycle
 
 
 @register("cycle")
@@ -24,77 +28,75 @@ def cycle(ctx: DetectorContext) -> DetectorResult:
         return DetectorResult([], ["threshold max_span_minutes could not be derived from this dataset"])
     t = ctx.txns
     t = t[t["src_account_id"] != t["dst_account_id"]]
-    pairs = t[["src_account_id", "dst_account_id"]].drop_duplicates()
-    g = nx.DiGraph()
-    g.add_edges_from(pairs.itertuples(index=False, name=None))
-    sccs = [c for c in nx.strongly_connected_components(g) if len(c) >= p["min_length"]]
-    if not sccs:
-        return DetectorResult([])
-    in_scc = set().union(*sccs)
-    sub_t = t[t["src_account_id"].isin(in_scc) & t["dst_account_id"].isin(in_scc)].sort_values("ts")
-    secs = ts_seconds(sub_t["ts"])
-    edge_txns: dict[tuple, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
-    for key, idx in sub_t.groupby(["src_account_id", "dst_account_id"]).indices.items():
-        edge_txns[key] = (secs[idx], sub_t["amount"].to_numpy(dtype=float)[idx], sub_t["txn_id"].to_numpy()[idx])
+    cur = t["currency"].fillna("").to_numpy() if "currency" in t.columns else np.full(len(t), "")
+    order = np.lexsort((ts_seconds(t["ts"]), cur, t["src_account_id"].to_numpy()))
+    src = t["src_account_id"].to_numpy()[order]
+    dst = t["dst_account_id"].to_numpy()[order]
+    secs = ts_seconds(t["ts"])[order]
+    amt = t["amount"].to_numpy(dtype=float)[order]
+    ids = t["txn_id"].to_numpy()[order]
+    cur = cur[order]
+    # index: (account, currency) -> slice of its outgoing txns sorted by time
+    out_idx: dict[tuple, tuple[int, int]] = {}
+    keys = list(zip(src, cur))
+    i = 0
+    while i < len(keys):
+        j = i
+        while j < len(keys) and keys[j] == keys[i]:
+            j += 1
+        out_idx[keys[i]] = (i, j)
+        i = j
 
     span = p["max_span_minutes"] * 60
-    findings, notes, enumerated = [], [], 0
-    for comp in sccs:
-        for cyc in nx.simple_cycles(g.subgraph(comp), length_bound=p["max_length"]):
-            if len(cyc) < p["min_length"]:
-                continue
-            enumerated += 1
-            if enumerated > p["max_cycles"]:
-                notes.append(f"cycle enumeration stopped at max_cycles={p['max_cycles']}; results are partial")
+    tol, lo_len, hi_len, budget = p["amount_tolerance"], p["min_length"], p["max_length"], p["max_search_expansions"]
+    seen: set[frozenset] = set()
+    findings, notes = [], []
+    expanded = 0
+
+    for e0 in range(len(src)):
+        start, t0, a0, c0 = src[e0], secs[e0], amt[e0], cur[e0]
+        stack = [(dst[e0], t0, [e0], a0, a0)]
+        while stack:
+            node, t_cur, path, amin, amax = stack.pop()
+            expanded += 1
+            if expanded > budget:
                 break
-            hit = _time_respecting(cyc, edge_txns, span, p["amount_tolerance"])
-            if hit is None:
+            sl = out_idx.get((node, c0))
+            if sl is None:
                 continue
-            txn_ids, amounts, t0, t1, cyc = hit
-            spread = (max(amounts) - min(amounts)) / max(amounts) if max(amounts) > 0 else 0.0
-            findings.append(Finding(
-                type="cycle", detector="cycle", subjects=tuple(node_id("account", a) for a in cyc),
-                txn_ids=tuple(txn_ids), strength=1 - 0.5 * (spread / p["amount_tolerance"] if p["amount_tolerance"] else 0),
-                details={"accounts": list(cyc), "length": len(cyc), "amounts": amounts,
-                         "amount_spread": spread, "span_minutes": (t1 - t0) / 60,
-                         "max_span_minutes": p["max_span_minutes"], "throughput": min(amounts)},
-                cypher_used=fmt_cypher(CYPHER_CYCLE, start=str(cyc[0]), min_length=p["min_length"],
-                                       max_length=p["max_length"], max_span_minutes=round(p["max_span_minutes"], 2))))
-        else:
-            continue
-        break
+            a, b = sl
+            k = a + int(np.searchsorted(secs[a:b], t_cur, side="left"))
+            visited = {src[x] for x in path}
+            while k < b and secs[k] - t0 <= span:
+                nmin, nmax = min(amin, amt[k]), max(amax, amt[k])
+                if nmax > 0 and (nmax - nmin) / nmax <= tol:
+                    nxt = dst[k]
+                    if nxt == start and len(path) + 1 >= lo_len:
+                        loop = path + [k]
+                        key = frozenset(ids[x] for x in loop)
+                        if key not in seen:
+                            seen.add(key)
+                            findings.append(_finding(loop, src, ids, amt, secs, c0, nmin, nmax, p))
+                    elif nxt not in visited and nxt != start and len(path) + 1 < hi_len:
+                        stack.append((nxt, secs[k], path + [k], nmin, nmax))
+                k += 1
+        if expanded > budget:
+            notes.append(f"cycle search stopped after {budget:,} expansions (max_search_expansions); results are partial")
+            break
     return DetectorResult(findings, notes)
 
 
-def _time_respecting(cyc, edge_txns, span, tol):
-    """Try every rotation: the enumerator may start the loop at any node, the money may start at any hop."""
-    for r in range(len(cyc)):
-        hit = _from_start(cyc[r:] + cyc[:r], edge_txns, span, tol)
-        if hit is not None:
-            return hit
-    return None
-
-
-def _from_start(cyc, edge_txns, span, tol):
-    edges = [(cyc[i], cyc[(i + 1) % len(cyc)]) for i in range(len(cyc))]
-    if any(e not in edge_txns for e in edges):
-        return None
-    first_ts, first_amt, first_ids = edge_txns[edges[0]]
-    for s in range(min(len(first_ts), _MAX_STARTS)):
-        t_cur, chosen_ids, chosen_amt = first_ts[s], [first_ids[s]], [first_amt[s]]
-        ok = True
-        for e in edges[1:]:
-            ts, amt, ids = edge_txns[e]
-            j = np.searchsorted(ts, t_cur, side="left")
-            if j >= len(ts) or ts[j] - first_ts[s] > span:
-                ok = False
-                break
-            t_cur = ts[j]
-            chosen_ids.append(ids[j])
-            chosen_amt.append(float(amt[j]))
-        if not ok:
-            continue
-        hi = max(chosen_amt)
-        if hi > 0 and (hi - min(chosen_amt)) / hi <= tol:
-            return chosen_ids, chosen_amt, first_ts[s], t_cur, list(cyc)
-    return None
+def _finding(loop, src, ids, amt, secs, currency, amin, amax, p) -> Finding:
+    accounts = [src[x] for x in loop]
+    spread = (amax - amin) / amax if amax > 0 else 0.0
+    amounts = [float(amt[x]) for x in loop]
+    return Finding(
+        type="cycle", detector="cycle", subjects=tuple(node_id("account", a) for a in accounts),
+        txn_ids=tuple(ids[x] for x in loop),
+        strength=1 - 0.5 * (spread / p["amount_tolerance"] if p["amount_tolerance"] else 0),
+        details={"accounts": accounts, "length": len(loop), "amounts": amounts, "currency": currency or None,
+                 "amount_spread": spread, "span_minutes": float(secs[loop[-1]] - secs[loop[0]]) / 60,
+                 "max_span_minutes": p["max_span_minutes"], "throughput": min(amounts),
+                 "start": str(pd.Timestamp(int(secs[loop[0]]), unit="s", tz="UTC"))},
+        cypher_used=fmt_cypher(CYPHER_CYCLE, start=str(accounts[0]), min_length=p["min_length"],
+                               max_length=p["max_length"], max_span_minutes=round(p["max_span_minutes"], 2)))

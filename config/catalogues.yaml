@@ -2,22 +2,25 @@
 # Entries come from the build brief. Wording is policy-safe: nothing here is punitive.
 
 # Signal roles: risk signals add points; context signals only feed alternatives.
+# joins_network: true  = the signal links its accounts into one network (money movement, small-scale sharing).
+#                false = the signal only corroborates accounts already in a network (attributes such as
+#                        screening hits, prior alerts, complaints, and identifiers shared at large scale).
 # Typologies: requires_any = defining signals; a typology is proposed only if one of them is present.
 signals:
-  rapid_pass_through: {role: risk, label: "Rapid pass-through of funds"}
-  cycle: {role: risk, label: "Circular flow of funds"}
-  fan_in: {role: risk, label: "Many distinct payers into one account"}
-  fan_out: {role: risk, label: "Many distinct payees from one account"}
-  structuring: {role: risk, label: "Repeated amounts just below a threshold"}
-  new_account_large_inflow: {role: risk, label: "Large inflow soon after account opening"}
-  burst_velocity: {role: risk, label: "Burst of transactions in a short window"}
-  shared_device_unrelated: {role: risk, label: "Device shared by accounts of different holders"}
-  shared_ip: {role: risk, label: "IP address shared by accounts of different holders"}
-  flagged_merchant: {role: risk, label: "Payments to a flagged merchant"}
-  complaint_cluster: {role: risk, label: "Cluster of complaints"}
-  sanctions_potential_match: {role: risk, label: "Potential watchlist name match requiring human review"}
-  prior_escalation: {role: risk, label: "Prior escalated alert"}
-  possible_same_entity: {role: risk, label: "Records that may belong to the same person"}
+  rapid_pass_through: {role: risk, joins_network: true, label: "Rapid pass-through of funds"}
+  cycle: {role: risk, joins_network: true, label: "Circular flow of funds"}
+  fan_in: {role: risk, joins_network: true, label: "Many distinct payers into one account"}
+  fan_out: {role: risk, joins_network: true, label: "Many distinct payees from one account"}
+  structuring: {role: risk, joins_network: true, label: "Repeated amounts just below a threshold"}
+  new_account_large_inflow: {role: risk, joins_network: true, label: "Large inflow soon after account opening"}
+  burst_velocity: {role: risk, joins_network: true, label: "Burst of transactions in a short window"}
+  shared_device_unrelated: {role: risk, joins_network: true, label: "Device shared by accounts of different holders"}
+  shared_ip: {role: risk, joins_network: false, label: "IP address shared by accounts of different holders"}
+  flagged_merchant: {role: risk, joins_network: false, label: "Payments to a flagged merchant"}
+  complaint_cluster: {role: risk, joins_network: false, label: "Cluster of complaints"}
+  sanctions_potential_match: {role: risk, joins_network: false, label: "Potential watchlist name match requiring human review"}
+  prior_escalation: {role: risk, joins_network: false, label: "Prior escalated alert"}
+  possible_same_entity: {role: risk, joins_network: true, label: "Records that may belong to the same person"}
   regular_cadence: {role: context, label: "Regular periodic payments"}
   isolation_forest: {role: model, label: "Unsupervised anomaly signal (model)"}
 
@@ -85,7 +88,10 @@ alternatives:
 
 # Dataset vocabulary the alternative rules need. Filled from the profile, confirmed by the data owner.
 alternative_params:
-  business_type_values: []             # Account.account_type / Customer.customer_type values that mean "business"
+  business_type_values: [BUSINESS]                       # SIFTLINE accounts.account_type; confirm
+  family_relationship_types: [FAMILY]                    # SIFTLINE entity_relationships.relationship_type; confirm
+  business_relationship_types: [EMPLOYEE, BUSINESS_ASSOCIATE]   # confirm
+  office_network_types: [CORPORATE]                      # SIFTLINE ip_addresses.network_type; confirm
 
 next_steps:
   request_kyc_documents: {label: "Request KYC documents", description: "Request and compare identity documents for the account holders."}

@@ -23,7 +23,7 @@ def derive_thresholds(detector_cfg: dict[str, dict[str, Any]], frames: dict[str,
     for det, spec in detector_cfg.items():
         if det not in enabled:
             continue
-        params = spec.get("params") or {}
+        params = dict(spec.get("params") or {})
         for pname, d in (spec.get("derive") or {}).items():
             mname, pct = d["metric"], float(d["percentile"])
             if extra_populations and mname in extra_populations:
@@ -47,6 +47,7 @@ def derive_thresholds(detector_cfg: dict[str, dict[str, Any]], frames: dict[str,
                     value *= float(params[mult])
                     note += f" x {mult}={params[mult]}"
                 entry |= {"value": value, "derivation": note}
+            params[pname] = entry["value"]
             out.setdefault(det, {})[pname] = entry
     return out, pops
 

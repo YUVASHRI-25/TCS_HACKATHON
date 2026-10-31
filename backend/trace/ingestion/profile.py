@@ -26,7 +26,7 @@ import pandas as pd
 
 from trace.domain.detectors.population import threshold_clustering
 
-_FILE_EXT = (".csv", ".tsv", ".txt", ".parquet", ".pq", ".csv.gz")
+_FILE_EXT = (".csv", ".tsv", ".parquet", ".pq", ".csv.gz")
 _PCTS = [0.01, 0.05, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999]
 # Column-name hint for possible ground-truth columns. Only flags candidates for human confirmation.
 _LABEL_HINT = re.compile(r"(fraud|launder|label|suspicious|is_?sar|target|class|alert)", re.I)
@@ -75,7 +75,7 @@ def read_any(path: Path, nrows: int | None) -> pd.DataFrame:
             return pd.read_csv(path, engine="pyarrow")
         except Exception:  # noqa: BLE001 - fall back to the python parser on any pyarrow failure
             pass
-    return pd.read_csv(path, nrows=nrows, sep=sep, engine="python" if sep is None else "c", low_memory=False)
+    return pd.read_csv(path, nrows=nrows, sep=sep or ",", low_memory=False)
 
 
 # ------------------------------------------------------------------------------------- profiling

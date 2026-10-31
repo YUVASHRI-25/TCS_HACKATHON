@@ -68,6 +68,10 @@ CANONICAL_MODEL: dict[str, CanonicalEntity] = {
             F("address", K.STRING, pii=True),
             F("national_id", K.STRING, pii=True),
             F("customer_type", K.STRING),
+            F("nationality", K.STRING),
+            F("occupation", K.STRING),
+            F("risk_rating", K.STRING),
+            F("kyc_status", K.STRING),
             F("kyc_date", K.DATE),
             F("location_id", K.ID, references="Location.location_id"),
         )),
@@ -75,7 +79,9 @@ CANONICAL_MODEL: dict[str, CanonicalEntity] = {
             F("account_id", K.ID, pii=True),
             F("customer_id", K.ID, references="Customer.customer_id"),
             F("bank_id", K.ID),
+            F("branch_id", K.ID),
             F("account_type", K.STRING),
+            F("status", K.STRING),
             F("open_date", K.TIMESTAMP),
             F("currency", K.CURRENCY),
             F("location_id", K.ID, references="Location.location_id"),
@@ -91,9 +97,10 @@ CANONICAL_MODEL: dict[str, CanonicalEntity] = {
             F("currency_received", K.CURRENCY),
             F("channel", K.STRING),
             F("txn_type", K.STRING),
+            F("status", K.STRING),
             F("merchant_id", K.ID, references="Merchant.merchant_id"),
             F("device_id", K.ID, references="Device.device_id"),
-            F("ip_address", K.ID, references="IP.ip_address"),
+            F("ip_id", K.ID, references="IP.ip_id"),
             F("location_id", K.ID, references="Location.location_id"),
             F("beneficiary_id", K.ID, references="Beneficiary.beneficiary_id"),
             F("label", K.BOOLEAN),  # dataset-provided ground truth, if any. Report-only, never tuned on.
@@ -108,17 +115,39 @@ CANONICAL_MODEL: dict[str, CanonicalEntity] = {
         )),
         CanonicalEntity("Device", "device_id", (
             F("device_id", K.ID),
+            F("fingerprint", K.STRING),
+            F("device_type", K.STRING),
             F("account_id", K.ID, references="Account.account_id"),
             F("customer_id", K.ID, references="Customer.customer_id"),
-            F("device_type", K.STRING),
             F("first_seen", K.TIMESTAMP),
         )),
-        CanonicalEntity("IP", "ip_address", (
-            F("ip_address", K.ID, pii=True),
+        CanonicalEntity("IP", "ip_id", (
+            F("ip_id", K.ID),
+            F("address", K.STRING, pii=True),
+            F("isp", K.STRING),
+            F("country", K.STRING),
+            F("network_type", K.STRING),
             F("account_id", K.ID, references="Account.account_id"),
             F("customer_id", K.ID, references="Customer.customer_id"),
+        )),
+        # Digital sessions: who used which device / IP, and when.
+        CanonicalEntity("Login", "login_id", (
+            F("login_id", K.ID),
+            F("customer_id", K.ID, references="Customer.customer_id"),
+            F("account_id", K.ID, references="Account.account_id"),
+            F("device_id", K.ID, references="Device.device_id"),
+            F("ip_id", K.ID, references="IP.ip_id"),
             F("ts", K.TIMESTAMP),
-            F("location_id", K.ID, references="Location.location_id"),
+            F("status", K.STRING),
+        )),
+        # Bridge table: a device observed in use by a holder.
+        CanonicalEntity("DeviceUsage", "usage_id", (
+            F("usage_id", K.ID),
+            F("device_id", K.ID, references="Device.device_id"),
+            F("customer_id", K.ID, references="Customer.customer_id"),
+            F("account_id", K.ID, references="Account.account_id"),
+            F("first_seen", K.TIMESTAMP),
+            F("last_seen", K.TIMESTAMP),
         )),
         CanonicalEntity("Location", "location_id", (
             F("location_id", K.ID),
@@ -130,10 +159,20 @@ CANONICAL_MODEL: dict[str, CanonicalEntity] = {
         )),
         CanonicalEntity("Beneficiary", "beneficiary_id", (
             F("beneficiary_id", K.ID),
+            F("customer_id", K.ID, references="Customer.customer_id"),
             F("account_id", K.ID, references="Account.account_id"),
             F("name", K.STRING, pii=True),
+            F("beneficiary_type", K.STRING),
             F("bank_id", K.ID),
             F("added_ts", K.TIMESTAMP),
+        )),
+        # Declared relationships between parties (e.g. family, employer). Used by alternative explanations.
+        CanonicalEntity("Relationship", "relationship_id", (
+            F("relationship_id", K.ID),
+            F("entity_1_id", K.ID),
+            F("entity_2_id", K.ID),
+            F("relationship_type", K.STRING),
+            F("source", K.STRING),
         )),
         CanonicalEntity("Complaint", "complaint_id", (
             F("complaint_id", K.ID),
@@ -141,15 +180,26 @@ CANONICAL_MODEL: dict[str, CanonicalEntity] = {
             F("subject_id", K.ID),
             F("ts", K.TIMESTAMP),
             F("category", K.STRING),
+            F("status", K.STRING),
             F("text", K.TEXT, pii=True),
         )),
         CanonicalEntity("Alert", "alert_id", (
             F("alert_id", K.ID),
             F("subject_type", K.STRING),
             F("subject_id", K.ID),
+            F("txn_id", K.ID),
             F("ts", K.TIMESTAMP),
             F("rule", K.STRING),
+            F("severity", K.STRING),
             F("outcome", K.STRING),
+        )),
+        # Previous investigations opened from alerts.
+        CanonicalEntity("PriorCase", "case_id", (
+            F("case_id", K.ID),
+            F("alert_id", K.ID, references="Alert.alert_id"),
+            F("status", K.STRING),
+            F("case_type", K.STRING),
+            F("opened_at", K.TIMESTAMP),
         )),
         CanonicalEntity("WatchlistEntry", "entry_id", (
             F("entry_id", K.ID),
@@ -157,6 +207,23 @@ CANONICAL_MODEL: dict[str, CanonicalEntity] = {
             F("list_name", K.STRING),
             F("country", K.STRING),
             F("date_of_birth", K.DATE, pii=True),
+        )),
+        # Screening hits produced by an upstream screening system (already matched to an entity id).
+        CanonicalEntity("ScreeningMatch", "match_id", (
+            F("match_id", K.ID),
+            F("entity_id", K.ID),
+            F("list_type", K.STRING),
+            F("match_type", K.STRING),
+            F("confidence", K.NUMBER),
+            F("source", K.STRING),
+        )),
+        # Dataset-provided ground truth at entity level. REPORT ONLY: never read by detectors or scoring.
+        CanonicalEntity("LabelledMember", "label_id", (
+            F("label_id", K.ID),
+            F("entity_id", K.ID),
+            F("group_id", K.ID),
+            F("role", K.STRING),
+            F("typology", K.STRING),
         )),
     ]
 }

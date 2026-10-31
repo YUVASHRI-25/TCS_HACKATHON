@@ -40,6 +40,50 @@ def hold_times_minutes(txns: pd.DataFrame) -> pd.DataFrame:
     return m
 
 
+class PassThroughEvents:
+    """Per inflow: how much of it the receiving account forwarded (same currency) within the gap."""
+
+    def __init__(self, t, hit, order, lo, hi, forwarded, ratio):
+        self.t, self.hit, self.order, self.lo, self.hi, self.forwarded, self.ratio = t, hit, order, lo, hi, forwarded, ratio
+
+
+def pass_through_events(txns: pd.DataFrame, max_gap_minutes: float, min_forward_ratio: float) -> PassThroughEvents:
+    gap = int(round(max_gap_minutes * 60))
+    t = txns[txns["src_account_id"] != txns["dst_account_id"]]
+    codes, _ = pd.factorize(pd.concat([t["src_account_id"], t["dst_account_id"]], ignore_index=True))
+    src_code, dst_code = codes[: len(t)].astype(np.int64), codes[len(t):].astype(np.int64)
+    if "currency" in t.columns:
+        # Amounts are only comparable within one currency (no FX rates are assumed).
+        cur, cur_uniq = pd.factorize(t["currency"].fillna("?"))
+        n_cur = max(1, len(cur_uniq))
+        src_code = src_code * n_cur + cur
+        dst_code = dst_code * n_cur + cur
+    secs = ts_seconds(t["ts"])
+    rel = secs - (secs.min() if len(secs) else 0)
+    shift = np.int64(1) << np.int64(34)  # > any relative span in seconds (~544 years)
+    out_key = src_code * shift + rel
+    order = np.argsort(out_key, kind="stable")
+    out_key_sorted = out_key[order]
+    amounts = t["amount"].to_numpy(dtype=float)
+    cum = np.concatenate([[0.0], np.cumsum(amounts[order])])
+    in_key = dst_code * shift + rel
+    lo = np.searchsorted(out_key_sorted, in_key, side="left")       # outflows at/after the inflow
+    hi = np.searchsorted(out_key_sorted, in_key + gap, side="right")
+    forwarded = cum[hi] - cum[lo]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(amounts > 0, np.minimum(forwarded / amounts, 1.0), 0.0)
+    return PassThroughEvents(t, ratio >= min_forward_ratio, order, lo, hi, forwarded, ratio)
+
+
+@metric("pass_through_events_per_account", "rapid pass-through events per account, over all accounts that "
+                                          "receive funds (uses the derived max_gap_minutes)")
+def _pass_events(frames, params):
+    ev = pass_through_events(frames["Transaction"], params["max_gap_minutes"], params["min_forward_ratio"])
+    receivers = pd.Index(ev.t["dst_account_id"].unique())
+    counts = pd.Series(ev.t["dst_account_id"].to_numpy()[ev.hit]).value_counts()
+    return counts.reindex(receivers, fill_value=0).to_numpy(dtype=float)
+
+
 @metric("hold_time_minutes", "minutes from each inflow into an account to that account's next outflow "
                              "(inflows with a later outflow only)")
 def _hold(frames, params):
@@ -83,32 +127,61 @@ def _inflow(frames, params):
     return a[np.isfinite(a)]
 
 
-def identifier_account_pairs(frames: dict[str, pd.DataFrame], ident: str) -> pd.DataFrame:
-    """(identifier, account, _source_table, _source_row) pairs for 'device' or 'ip'."""
-    tx_col, ent, ent_col = {"device": ("device_id", "Device", "device_id"),
-                            "ip": ("ip_address", "IP", "ip_address")}[ident]
+# (entity, identifier column) for each place a device / IP can be observed in use.
+USAGE_SOURCES = {
+    "device": {"Transaction": "device_id", "Device": "device_id", "DeviceUsage": "device_id", "Login": "device_id"},
+    "ip": {"Transaction": "ip_id", "IP": "ip_id", "Login": "ip_id"},
+}
+
+
+def identifier_account_pairs(frames: dict[str, pd.DataFrame], ident: str,
+                             sources: list[str] | None = None) -> pd.DataFrame:
+    """(ident, account_id, holder, _source_table, _source_row, txn_id) for 'device' or 'ip'.
+
+    Customer-level usage (e.g. logins) is expanded to that customer's accounts via Account.customer_id.
+    `sources` restricts which canonical entities are read (detector parameter `usage_sources`).
+    """
+    cols = ["ident", "account_id", "holder", "_source_table", "_source_row", "txn_id"]
+    acc = frames.get("Account")
+    owner = acc[["account_id", "customer_id"]].dropna() if acc is not None and "customer_id" in acc.columns else None
     parts = []
-    t = frames.get("Transaction")
-    if t is not None and tx_col in t.columns:
-        p = t[[tx_col, "src_account_id", "_source_table", "_source_row", "txn_id"]].dropna(subset=[tx_col])
-        parts.append(p.rename(columns={tx_col: "ident", "src_account_id": "account_id"}))
-    e = frames.get(ent)
-    if e is not None and ent_col in e.columns and "account_id" in e.columns:
-        p = e[[ent_col, "account_id", "_source_table", "_source_row"]].dropna(subset=[ent_col, "account_id"])
-        parts.append(p.rename(columns={ent_col: "ident"}).assign(txn_id=None))
+    for ent, col in USAGE_SOURCES[ident].items():
+        if sources is not None and ent not in sources:
+            continue
+        df = frames.get(ent)
+        if df is None or col not in df.columns:
+            continue
+        df = df.dropna(subset=[col])
+        if ent == "Transaction":
+            p = df[[col, "src_account_id", "_source_table", "_source_row", "txn_id"]].rename(
+                columns={col: "ident", "src_account_id": "account_id"})
+            parts.append(p.assign(holder=None))
+        elif "account_id" in df.columns and df["account_id"].notna().any():
+            p = df.dropna(subset=["account_id"])[[col, "account_id", "_source_table", "_source_row"]]
+            parts.append(p.rename(columns={col: "ident"}).assign(holder=None, txn_id=None))
+        elif "customer_id" in df.columns and owner is not None:
+            p = df.dropna(subset=["customer_id"])[[col, "customer_id", "_source_table", "_source_row"]]
+            p = p.merge(owner, on="customer_id").rename(columns={col: "ident", "customer_id": "holder"})
+            parts.append(p.assign(txn_id=None))
     if not parts:
-        return pd.DataFrame(columns=["ident", "account_id", "_source_table", "_source_row", "txn_id"])
-    return pd.concat(parts, ignore_index=True)
+        return pd.DataFrame(columns=cols)
+    out = pd.concat(parts, ignore_index=True)
+    if owner is not None:
+        out["holder"] = out["holder"].fillna(out["account_id"].map(dict(zip(owner["account_id"], owner["customer_id"]))))
+    out["holder"] = out["holder"].fillna(out["account_id"])
+    return out[cols]
 
 
-@metric("accounts_per_device", "distinct accounts per device identifier")
+@metric("accounts_per_device", "distinct accounts per device identifier (shared_device.usage_sources)")
 def _apd(frames, params):
-    return identifier_account_pairs(frames, "device").groupby("ident")["account_id"].nunique().to_numpy(dtype=float)
+    pairs = identifier_account_pairs(frames, "device", params.get("usage_sources"))
+    return pairs.groupby("ident")["account_id"].nunique().to_numpy(dtype=float)
 
 
-@metric("accounts_per_ip", "distinct accounts per IP address")
+@metric("accounts_per_ip", "distinct accounts per IP identifier (shared_ip.usage_sources)")
 def _api(frames, params):
-    return identifier_account_pairs(frames, "ip").groupby("ident")["account_id"].nunique().to_numpy(dtype=float)
+    pairs = identifier_account_pairs(frames, "ip", params.get("usage_sources"))
+    return pairs.groupby("ident")["account_id"].nunique().to_numpy(dtype=float)
 
 
 @metric("complaints_per_subject_window", "complaints per subject per tumbling window "
@@ -141,33 +214,51 @@ def threshold_clustering(x: np.ndarray, band: float = 0.1) -> list[dict[str, Any
     return sorted(res, key=lambda r: -(r["ratio_below_above"] or 0))[:8]
 
 
-def structuring_threshold(frames: dict[str, pd.DataFrame], params: dict[str, Any]) -> tuple[float | None, str]:
-    if params.get("reporting_threshold"):
-        return float(params["reporting_threshold"]), "configured reporting_threshold"
-    amounts = frames["Transaction"]["amount"].to_numpy(dtype=float)
-    cands = [c for c in threshold_clustering(amounts, params["band"])
-             if c["ratio_below_above"] and c["ratio_below_above"] >= params["min_clustering_ratio"]]
-    if not cands:
-        return None, (f"no round mark with below/above ratio >= {params['min_clustering_ratio']} "
-                      f"in the amount distribution")
-    best = cands[0]
-    return float(best["mark"]), (f"detected from amount distribution: {best['below']} txns just below vs "
-                                 f"{best['above']} just above {best['mark']:g} (ratio {best['ratio_below_above']})")
-
-
-def near_threshold_counts(frames: dict[str, pd.DataFrame], params: dict[str, Any], threshold: float) -> pd.DataFrame:
+def structuring_threshold(frames: dict[str, pd.DataFrame], params: dict[str, Any]
+                          ) -> dict[str, tuple[float | None, str]]:
+    """Per currency (amounts in different currencies are never compared): {currency: (threshold, how)}.
+    Currency key "" when the data has no currency field."""
     t = frames["Transaction"]
-    near = t[(t["amount"] >= threshold * (1 - params["band"])) & (t["amount"] < threshold)]
+    groups = t.groupby(t["currency"].fillna("")) if "currency" in t.columns else [("", t)]
+    out: dict[str, tuple[float | None, str]] = {}
+    configured = params.get("reporting_threshold")
+    for cur, g in groups:
+        if configured:
+            val = configured.get(cur) if isinstance(configured, dict) else configured
+            if val:
+                out[cur] = (float(val), "configured reporting_threshold")
+                continue
+        cands = [c for c in threshold_clustering(g["amount"].to_numpy(dtype=float), params["band"])
+                 if c["ratio_below_above"] and c["ratio_below_above"] >= params["min_clustering_ratio"]]
+        if not cands:
+            out[cur] = (None, f"no round mark with below/above ratio >= {params['min_clustering_ratio']} in the "
+                              f"{cur or 'amount'} distribution")
+            continue
+        best = cands[0]
+        out[cur] = (float(best["mark"]), f"detected from the {cur or 'amount'} distribution: {best['below']} txns just "
+                                         f"below vs {best['above']} just above {best['mark']:g} "
+                                         f"(ratio {best['ratio_below_above']})")
+    return out
+
+
+def near_threshold_counts(frames: dict[str, pd.DataFrame], params: dict[str, Any],
+                          thresholds: dict[str, tuple[float, str]]) -> pd.DataFrame:
+    t = frames["Transaction"]
+    cur = t["currency"].fillna("") if "currency" in t.columns else pd.Series("", index=t.index)
     w = int(params["window_days"] * 86400)
-    df = pd.DataFrame({"k": near["src_account_id"].to_numpy(), "b": ts_seconds(near["ts"]) // w,
-                       "txn_id": near["txn_id"].to_numpy()})
-    return df
+    parts = []
+    for c, (thr, _) in thresholds.items():
+        m = (cur == c) & (t["amount"] >= thr * (1 - params["band"])) & (t["amount"] < thr)
+        near = t[m]
+        parts.append(pd.DataFrame({"k": near["src_account_id"].to_numpy(), "cur": c, "b": ts_seconds(near["ts"]) // w,
+                                   "txn_id": near["txn_id"].to_numpy()}))
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=["k", "cur", "b", "txn_id"])
 
 
 @metric("near_threshold_count_per_window", "transactions per sending account per window within the band just "
                                            "below the structuring threshold (account-windows with >=1 such txn)")
 def _near(frames, params):
-    thr, _ = structuring_threshold(frames, params)
-    if thr is None:
+    found = {c: v for c, v in structuring_threshold(frames, params).items() if v[0] is not None}
+    if not found:
         return np.array([], dtype=float)
-    return near_threshold_counts(frames, params, thr).groupby(["k", "b"]).size().to_numpy(dtype=float)
+    return near_threshold_counts(frames, params, found).groupby(["k", "cur", "b"]).size().to_numpy(dtype=float)

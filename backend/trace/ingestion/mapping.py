@@ -123,10 +123,17 @@ def _same_as(df: pd.DataFrame, p: dict[str, Any]) -> pd.Series:
     return df[p["column"]]
 
 
+def _constant(df: pd.DataFrame, p: dict[str, Any]) -> pd.Series:
+    """A value fixed by the source schema, e.g. subject_type="customer" for a table whose subject column is
+    documented as customer_id. Not for filling data values. params: value."""
+    return pd.Series(p["value"], index=df.index, dtype="string")
+
+
 DERIVATIONS: dict[str, Derivation] = {
     "concat_columns": _concat_columns,
     "row_number": _row_number,
     "same_as": _same_as,
+    "constant": _constant,
 }
 
 

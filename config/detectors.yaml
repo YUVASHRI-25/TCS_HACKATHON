@@ -66,13 +66,15 @@ detectors:
       min_forward_ratio: 0.8           # confirm: share of an inflow forwarded on ("X%" in spec)
     derive:
       max_gap_minutes: {metric: hold_time_minutes, percentile: 10}   # confirm percentile
+      # an account is flagged only if it forwards rapidly more often than is typical here
+      min_events: {metric: pass_through_events_per_account, percentile: 90}  # confirm percentile
 
   cycle:
     params:
       min_length: 3                    # spec
       max_length: 6                    # spec
       amount_tolerance: 0.2            # confirm: max relative spread of hop amounts
-      max_cycles: 20000                # safety cap on enumeration; reported if hit
+      max_search_expansions: 2000000   # safety cap on the temporal search; reported if hit
     derive:
       max_span_minutes: {metric: hold_time_minutes, percentile: 90, multiply_by_param: max_length}
 
@@ -116,16 +118,22 @@ detectors:
       max_interval_cv: 0.15            # confirm: coefficient of variation of gaps between payments
       max_amount_cv: 0.1               # confirm
 
+  # Sharing = used by >= min_accounts accounts of >= 2 holders AND by more accounts than is typical for
+  # this dataset (min_accounts_exceeding). usage_sources: which canonical tables count as "use" (confirm).
   shared_device:
     params:
       min_accounts: 2
+      usage_sources: [DeviceUsage, Device, Transaction]   # confirm: logins excluded (see dataset notes)
     derive:
+      min_accounts_exceeding: {metric: accounts_per_device, percentile: 90}   # confirm percentile
       large_share_accounts: {metric: accounts_per_device, percentile: 99}
 
   shared_ip:
     params:
       min_accounts: 2
+      usage_sources: [Login, IP, Transaction]
     derive:
+      min_accounts_exceeding: {metric: accounts_per_ip, percentile: 90}       # confirm percentile
       large_share_accounts: {metric: accounts_per_ip, percentile: 99}
 
   complaint_cluster:
@@ -136,11 +144,12 @@ detectors:
 
   prior_escalation:
     params:
-      escalated_outcomes: []           # dataset vocabulary: fill from the profile's Alert.outcome values
+      escalated_outcomes: [ESCALATED]  # dataset vocabulary (SIFTLINE investigation_cases.status); confirm
 
   sanctions_potential_match:
     params:
-      min_name_score: 90               # confirm
+      min_name_score: 90               # confirm (name-vs-watchlist matching, when a watchlist exists)
+      exact_match_types: [EXACT]       # dataset vocabulary (SIFTLINE watchlist_matches.match_type); confirm
 
   flagged_merchant:
     params: {}

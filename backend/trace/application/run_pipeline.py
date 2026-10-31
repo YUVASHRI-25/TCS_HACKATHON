@@ -39,36 +39,69 @@ class ConfigInvalid(RuntimeError):
     pass
 
 
+def _labelled_accounts(frames: dict[str, pd.DataFrame]) -> tuple[set[str], str] | None:
+    t = frames.get("Transaction")
+    if t is not None and "label" in t.columns and t["label"].notna().any():
+        pos = t[t["label"].fillna(False).astype(bool)]
+        return (set(pos["src_account_id"]) | set(pos["dst_account_id"]),
+                "account appears as sender or receiver of at least one labelled-positive transaction")
+    lm = frames.get("LabelledMember")
+    if lm is not None and "entity_id" in lm.columns:
+        acc = frames.get("Account")
+        ids = set(lm["entity_id"].dropna())
+        out = set()
+        if acc is not None:
+            out |= ids & set(acc["account_id"])
+            if "customer_id" in acc.columns:
+                out |= set(acc.loc[acc["customer_id"].isin(ids), "account_id"])
+        return out, ("account listed as a labelled member, or owned by a labelled customer "
+                     "(LabelledMember; accounts of a labelled customer are all counted)")
+    return None
+
+
 def _label_report(frames: dict[str, pd.DataFrame], case_dicts: list[dict[str, Any]]) -> dict[str, Any] | None:
     """REPORT ONLY. Never used to tune anything."""
-    t = frames.get("Transaction")
-    if t is None or "label" not in t.columns or not t["label"].notna().any():
+    lab = _labelled_accounts(frames)
+    if lab is None:
         return None
-    pos_txn = t[t["label"].fillna(False).astype(bool)]
-    positives = set(pos_txn["src_account_id"]) | set(pos_txn["dst_account_id"])
+    positives, definition = lab
     surfaced = [{e["raw_id"] for e in c["entities"] if e["role"] == "member" and e["type"] == "account"} for c in case_dicts]
     all_members = set().union(*surfaced) if surfaced else set()
     out: dict[str, Any] = {
         "note": "Report only. Labels were not used to set any threshold or weight.",
-        "label_definition": "account appears as sender or receiver of at least one labelled-positive transaction",
+        "label_definition": definition,
+        "accounts_total": int(len(frames["Account"])) if "Account" in frames else None,
         "labelled_positive_accounts": len(positives),
         "positive_accounts_in_surfaced_networks": len(positives & all_members),
         "share_of_positive_accounts_surfaced": round(len(positives & all_members) / len(positives), 4) if positives else None,
         "member_precision": round(len(positives & all_members) / len(all_members), 4) if all_members else None,
         "precision_at_k": {},
     }
-    for k in (10, 25, 50, 100):
+    base = len(positives) / out["accounts_total"] if out["accounts_total"] else None
+    out["base_rate"] = round(base, 4) if base is not None else None
+    out["base_rate_note"] = ("share of all accounts that are labelled: a random selection of accounts would "
+                             "reach this precision by chance")
+    out["precision_at_k_definition"] = "share of member accounts in the top-k networks (by priority score) that are labelled"
+    for k in (5, 10, 25, 50, 100):
         top = surfaced[:k]
         if len(top) < k:
             break
-        out["precision_at_k"][str(k)] = round(sum(1 for m in top if m & positives) / k, 4)
+        members = set().union(*top)
+        out["precision_at_k"][str(k)] = round(len(members & positives) / len(members), 4) if members else None
+    if base is not None and surfaced:
+        hit = sum(1 for m in surfaced if m & positives) / len(surfaced)
+        chance = sum(1 - (1 - base) ** len(m) for m in surfaced) / len(surfaced)
+        out["networks_with_any_labelled_member"] = round(hit, 4)
+        out["networks_with_any_labelled_member_by_chance"] = round(chance, 4)
+    out["lift_over_base_rate"] = (round(out["member_precision"] / base, 3)
+                                  if base and out["member_precision"] is not None else None)
     return out
 
 
-def suspicious_pairs(findings, tx: TxnIndex, roles: dict[str, str]) -> set[tuple[str, str]]:
-    """Account pairs joined by a transaction that a deterministic risk finding cites. Ordinary history
+def suspicious_pairs(findings, tx: TxnIndex, joins: set[str]) -> set[tuple[str, str]]:
+    """Account pairs joined by a transaction that a network-building finding cites. Ordinary history
     between two flagged accounts does not join them into one network."""
-    ids = {t for f in findings if f.source == "deterministic" and roles.get(f.type) == "risk" for t in f.txn_ids}
+    ids = {t for f in findings if f.source == "deterministic" and f.type in joins for t in f.txn_ids}
     rows = tx.rows(ids)
     if rows.empty:
         return set()
@@ -124,8 +157,8 @@ def run(container: Container | None = None) -> dict[str, Any]:
     # ---- networks and cases
     cr = cfg.detectors["case_rules"]
     tx = TxnIndex(frames["Transaction"])
-    kept, dropped, grouping = group(det.findings, suspicious_pairs(det.findings, tx, cfg.roles), cfg.roles,
-                                    cr["max_network_size"], cr["min_deterministic_finding_types"])
+    kept, dropped, grouping = group(det.findings, suspicious_pairs(det.findings, tx, cfg.joining_signals), cfg.roles,
+                                    cr["max_network_size"], cr["min_deterministic_finding_types"], cfg.joining_signals)
     scfg = ScoringConfig.from_dict(cfg.detectors)
     built = [build_case(n, frames, tx, scfg, cfg.catalogues, cap_rows, derived_fields, tg.node) for n in kept]
     built.sort(key=lambda x: -x.priority_score)

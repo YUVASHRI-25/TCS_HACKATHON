@@ -52,18 +52,22 @@ CAPABILITIES: tuple[Capability, ...] = (
                Requirement(all_of=("Transaction.merchant_id", "Merchant.merchant_id", "Merchant.flagged"),
                            allow_derived=False)),
     Capability("complaint_cluster", "detector", "Complaint cluster",
-               Requirement(all_of=("Complaint.complaint_id", "Complaint.subject_id", "Complaint.ts"),
-                           allow_derived=False)),
-    Capability("sanctions_potential_match", "detector", "Sanctions potential match",
-               Requirement(all_of=("WatchlistEntry.name", "Customer.name"), allow_derived=False)),
+               Requirement(all_of=("Complaint.complaint_id", "Complaint.subject_id", "Complaint.ts"))),
+    Capability("sanctions_potential_match", "detector", "Watchlist potential match",
+               Requirement(any_of=(("WatchlistEntry.name", "Customer.name"),
+                                   ("ScreeningMatch.entity_id", "ScreeningMatch.list_type")), allow_derived=False,
+                           note="Needs a watchlist to screen names against, or upstream screening hits.")),
     Capability("prior_escalation", "detector", "Prior escalation",
-               Requirement(all_of=("Alert.alert_id", "Alert.subject_id", "Alert.outcome"), allow_derived=False)),
+               Requirement(any_of=(("Alert.alert_id", "Alert.subject_id", "Alert.outcome"),
+                                   ("Alert.alert_id", "Alert.subject_id", "PriorCase.alert_id", "PriorCase.status")))),
     Capability("shared_device", "detector", "Shared device across unrelated holders",
                Requirement(any_of=(("Transaction.device_id",), ("Device.device_id", "Device.account_id"),
-                                   ("Device.device_id", "Device.customer_id")), allow_derived=False)),
+                                   ("Device.device_id", "Device.customer_id", "Account.customer_id"),
+                                   ("DeviceUsage.device_id", "DeviceUsage.customer_id", "Account.customer_id"),
+                                   ("Login.device_id", "Login.customer_id", "Account.customer_id")), allow_derived=False)),
     Capability("shared_ip", "detector", "Shared IP across unrelated holders",
-               Requirement(any_of=(("Transaction.ip_address",), ("IP.ip_address", "IP.account_id"),
-                                   ("IP.ip_address", "IP.customer_id")), allow_derived=False)),
+               Requirement(any_of=(("Transaction.ip_id",), ("IP.ip_id", "IP.account_id"),
+                                   ("Login.ip_id", "Login.customer_id", "Account.customer_id")), allow_derived=False)),
     # --- resolution ------------------------------------------------------------------------
     Capability("entity_resolution", "resolver", "Entity resolution (possible same entity)",
                Requirement(any_of=(("Customer.name",), ("Customer.phone",), ("Customer.email",),
@@ -72,6 +76,10 @@ CAPABILITIES: tuple[Capability, ...] = (
     # --- unsupervised model (capped signal) -------------------------------------------------
     Capability("isolation_forest", "model", "IsolationForest anomaly signal", Requirement(all_of=_TXN_AMT),
                deterministic=False),
+    # --- evaluation only (never feeds detection or scoring) ----------------------------------
+    Capability("label_report", "evaluation", "Ground-truth report (report only)",
+               Requirement(any_of=(("Transaction.label",), ("LabelledMember.entity_id",)), allow_derived=False,
+                           note="Without labels, network discovery is reported as counts and a spot-check sheet.")),
 )
 
 

@@ -14,6 +14,7 @@ from typing import Any
 import networkx as nx
 import pandas as pd
 
+from trace.domain.detectors.population import identifier_account_pairs
 from trace.domain.model.findings import Link, node_id
 
 _ENTITY_NODES = {
@@ -21,12 +22,13 @@ _ENTITY_NODES = {
     "Account": ("account", "account_id"),
     "Merchant": ("merchant", "merchant_id"),
     "Device": ("device", "device_id"),
-    "IP": ("ip", "ip_address"),
+    "IP": ("ip", "ip_id"),
     "Location": ("location", "location_id"),
     "Beneficiary": ("beneficiary", "beneficiary_id"),
     "Complaint": ("complaint", "complaint_id"),
     "WatchlistEntry": ("watchlist_entry", "entry_id"),
     "Alert": ("prior_alert", "alert_id"),
+    "PriorCase": ("prior_case", "case_id"),
 }
 
 
@@ -73,8 +75,7 @@ class TraceGraph:
                     self._add_node(n, "account", _src(r), True)
                 self.g.add_edge(a, b, type="TRANSFERS_TO", n_txns=int(r["n"]), amount=float(r["amount"]),
                                 first_ts=str(r["first_ts"]), last_ts=str(r["last_ts"]), source=_src(r))
-            for col, kind, etype in (("merchant_id", "merchant", "PAID_MERCHANT"), ("device_id", "device", "USES_DEVICE"),
-                                     ("ip_address", "ip", "LOGGED_FROM_IP"), ("location_id", "location", "LOCATED_IN"),
+            for col, kind, etype in (("merchant_id", "merchant", "PAID_MERCHANT"), ("location_id", "location", "LOCATED_IN"),
                                      ("beneficiary_id", "beneficiary", "TRANSFERS_TO_BENEFICIARY")):
                 if col not in t.columns:
                     continue
@@ -84,22 +85,58 @@ class TraceGraph:
                     self._add_node(other, kind, _src(r), False)
                     self.g.add_edge(node_id("account", r["src_account_id"]), other, type=etype, source=_src(r))
 
-        for ent, kind, etype in (("Device", "device", "USES_DEVICE"), ("IP", "ip", "LOGGED_FROM_IP")):
-            df = f.get(ent)
-            key = _ENTITY_NODES[ent][1]
-            if df is not None and "account_id" in df.columns:
-                for r in df.dropna(subset=[key, "account_id"]).to_dict("records"):
-                    self.g.add_edge(node_id("account", r["account_id"]), node_id(kind, r[key]), type=etype, source=_src(r))
+        # Device / IP usage at account level (customer-level usage expanded through account ownership).
+        for ident, kind, etype in (("device", "device", "USES_DEVICE"), ("ip", "ip", "LOGGED_FROM_IP")):
+            pairs = identifier_account_pairs(f, ident).drop_duplicates(subset=["ident", "account_id", "_source_table"])
+            for r in pairs.to_dict("records"):
+                target = node_id(kind, r["ident"])
+                self._add_node(target, kind, _src(r), False)
+                self.g.add_edge(node_id("account", r["account_id"]), target, type=etype, source=_src(r),
+                                via=r["_source_table"])
+
+        acc_of: dict = {}
+        if acc is not None and "customer_id" in acc.columns:
+            for a, c in zip(acc["account_id"], acc["customer_id"]):
+                acc_of.setdefault(c, []).append(a)
+
+        def subject_nodes(raw, stype=None):
+            kind = str(stype).lower() if isinstance(stype, str) and stype else None
+            if kind in (None, "account") and node_id("account", raw) in self.g:
+                return [node_id("account", raw)]
+            if raw in acc_of:
+                return [node_id("customer", raw)]
+            return [node_id(kind or "entity", raw)] if node_id(kind or "entity", raw) in self.g else []
 
         for ent, kind, etype in (("Complaint", "complaint", "COMPLAINT_ABOUT"), ("Alert", "prior_alert", "PRIOR_ALERT_ON")):
             df = f.get(ent)
             key = _ENTITY_NODES[ent][1]
             if df is not None and "subject_id" in df.columns:
                 for r in df.dropna(subset=[key, "subject_id"]).to_dict("records"):
-                    stype = str(r.get("subject_type") or "account").lower()
-                    target = node_id(stype, r["subject_id"])
-                    if target in self.g:
+                    for target in subject_nodes(r["subject_id"], r.get("subject_type")):
                         self.g.add_edge(node_id(kind, r[key]), target, type=etype, source=_src(r))
+
+        pc = f.get("PriorCase")
+        if pc is not None and "alert_id" in pc.columns:
+            for r in pc.dropna(subset=["alert_id"]).to_dict("records"):
+                if node_id("prior_alert", r["alert_id"]) in self.g:
+                    self.g.add_edge(node_id("prior_case", r["case_id"]), node_id("prior_alert", r["alert_id"]),
+                                    type="OPENED_FROM", source=_src(r), status=r.get("status"))
+
+        rel = f.get("Relationship")
+        if rel is not None:
+            for r in rel.dropna(subset=["entity_1_id", "entity_2_id"]).to_dict("records"):
+                a, b = subject_nodes(r["entity_1_id"]), subject_nodes(r["entity_2_id"])
+                if a and b:
+                    self.g.add_edge(a[0], b[0], type="DECLARED_RELATIONSHIP", source=_src(r),
+                                    relationship_type=r.get("relationship_type"))
+
+        sm = f.get("ScreeningMatch")
+        if sm is not None:
+            for r in sm.dropna(subset=["entity_id"]).to_dict("records"):
+                target = node_id("watchlist_entry", r["entity_id"])
+                self._add_node(target, "watchlist_entry", _src(r), False, list_type=r.get("list_type"))
+                for n in subject_nodes(r["entity_id"]):
+                    self.g.add_edge(n, target, type="SCREENED_AGAINST", source=_src(r), match_type=r.get("match_type"))
 
     def add_links(self, links: list[Link]) -> None:
         for ln in links:

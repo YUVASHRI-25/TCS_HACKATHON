@@ -21,6 +21,10 @@ class TraceConfig:
     def roles(self) -> dict[str, str]:
         return {k: v["role"] for k, v in (self.catalogues.get("signals") or {}).items()}
 
+    @property
+    def joining_signals(self) -> set[str]:
+        return {k for k, v in (self.catalogues.get("signals") or {}).items() if v.get("joins_network")}
+
     def validate(self) -> list[str]:
         """Configuration problems that would make scoring ambiguous."""
         problems = []

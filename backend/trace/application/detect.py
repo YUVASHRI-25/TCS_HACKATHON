@@ -65,10 +65,12 @@ def run_detection(frames: dict[str, pd.DataFrame], det_cfg: dict[str, Any], enab
             links, notes = resolve(frames["Customer"], det_cfg["resolution"])
             return links_to_findings(links, accounts_of), notes, links
         record("entity_resolution", _er)
-    if "sanctions_potential_match" in enabled:
+    wl = frames.get("WatchlistEntry")
+    if "sanctions_potential_match" in enabled and wl is not None and "name" in wl.columns and \
+            "name" in frames.get("Customer", pd.DataFrame()).columns:
         p = params.get("sanctions_potential_match", {})
-        record("sanctions_potential_match", lambda: (
-            sanctions_matches(frames["Customer"], frames["WatchlistEntry"], p["min_name_score"], accounts_of), [], []))
+        record("sanctions_name_match", lambda: (
+            sanctions_matches(frames["Customer"], wl, p["min_name_score"], accounts_of), [], []))
     if "isolation_forest" in enabled:
         p = params.get("isolation_forest", {})
         spec = (dcfg.get("isolation_forest", {}).get("derive") or {}).get("min_score")

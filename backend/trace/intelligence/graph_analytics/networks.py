@@ -36,30 +36,42 @@ class GroupingReport:
 
 
 def group(findings: list[Finding], transfer_pairs: set[tuple[str, str]], roles: dict[str, str],
-          max_size: int, min_types: int) -> tuple[list[Network], list[Network], GroupingReport]:
-    joining = [f for f in findings if roles.get(f.type) in ("risk", "model")]
+          max_size: int, min_types: int, joins: set[str] | None = None
+          ) -> tuple[list[Network], list[Network], GroupingReport]:
+    """joins: signal types allowed to link accounts into a network (default: all risk/model signals).
+    Other risk/model findings attach to the networks their subjects already belong to."""
+    scored = [f for f in findings if roles.get(f.type) in ("risk", "model")]
+    joining = [f for f in scored if joins is None or f.type in joins]
+    attaching = [f for f in scored if joins is not None and f.type not in joins]
     context = [f for f in findings if roles.get(f.type) == "context"]
-    g = nx.Graph()
+    # Built in sorted order so components and Louvain communities do not depend on hash ordering.
+    edges: set[tuple[str, str]] = set()
+    nodes: set[str] = set()
     for f in joining:
         subs = list(f.subjects)
-        g.add_nodes_from(subs)
-        g.add_edges_from((subs[0], s) for s in subs[1:])
-    nodes = set(g.nodes)
-    g.add_edges_from((u, v) for u, v in transfer_pairs if u in nodes and v in nodes and u != v)
+        nodes.update(subs)
+        edges.update(tuple(sorted((subs[0], x))) for x in subs[1:] if x != subs[0])
+    edges.update(tuple(sorted((u, v))) for u, v in transfer_pairs if u in nodes and v in nodes and u != v)
+    g = nx.Graph()
+    g.add_nodes_from(sorted(nodes))
+    g.add_edges_from(sorted(edges))
 
     groups: list[set[str]] = []
-    comps = list(nx.connected_components(g))
+    comps = sorted((set(c) for c in nx.connected_components(g)), key=min)
     split = 0
     for comp in comps:
         if len(comp) > max_size:
             split += 1
-            groups.extend(nx.community.louvain_communities(g.subgraph(comp), seed=0))
+            h = nx.Graph()
+            h.add_nodes_from(sorted(comp))
+            h.add_edges_from(sorted(e for e in edges if e[0] in comp))
+            groups.extend(sorted((set(x) for x in nx.community.louvain_communities(h, seed=0)), key=min))
         else:
-            groups.append(set(comp))
+            groups.append(comp)
 
     nets = [Network(members=m) for m in groups]
     owner: dict[str, int] = {n: i for i, net in enumerate(nets) for n in net.members}
-    for f in joining:
+    for f in joining + attaching:
         for i in sorted({owner[s] for s in f.subjects if s in owner}):
             nets[i].findings.append(f)
     for f in context:

@@ -33,7 +33,7 @@ def test_rapid_pass_through_ignores_self_transfers():
 def test_cycle_requires_time_order_and_similar_amounts():
     ok = txns([("a", "2024-01-01 10:00", "A", "B", 1000), ("b", "2024-01-01 10:10", "B", "C", 980),
                ("c", "2024-01-01 10:20", "C", "A", 960)])
-    p = {"min_length": 3, "max_length": 6, "amount_tolerance": 0.1, "max_cycles": 100, "max_span_minutes": 60}
+    p = {"min_length": 3, "max_length": 6, "amount_tolerance": 0.1, "max_search_expansions": 100000, "max_span_minutes": 60}
     res = run("cycle", {"Transaction": ok}, p)
     assert len(res.findings) == 1 and set(res.findings[0].subjects) == {"account:A", "account:B", "account:C"}
 

@@ -7,7 +7,7 @@ import pandas as pd
 
 from trace.domain.detectors.base import (DetectorContext, DetectorResult, cap_list, fmt_cypher, register,
                                          tail_strength, ts_seconds)
-from trace.domain.detectors.population import near_threshold_counts, structuring_threshold
+from trace.domain.detectors.population import near_threshold_counts, pass_through_events, structuring_threshold
 from trace.domain.model.findings import Finding, node_id
 
 
@@ -35,33 +35,18 @@ def rapid_pass_through(ctx: DetectorContext) -> DetectorResult:
     if (why := _missing(ctx, det, "max_gap_minutes")):
         return DetectorResult([], [why])
     p = ctx.p(det)
-    gap = int(round(p["max_gap_minutes"] * 60))
-    t = ctx.txns
-    t = t[t["src_account_id"] != t["dst_account_id"]]
-    codes, uniq = pd.factorize(pd.concat([t["src_account_id"], t["dst_account_id"]], ignore_index=True))
-    src_code, dst_code = codes[: len(t)], codes[len(t):]
-    secs = ts_seconds(t["ts"])
-    base = secs.min() if len(secs) else 0
-    rel = secs - base
-    shift = np.int64(1) << np.int64(34)  # > any relative span in seconds (~544 years)
-
-    out_key = src_code.astype(np.int64) * shift + rel
-    order = np.argsort(out_key, kind="stable")
-    out_key_sorted = out_key[order]
+    ev = pass_through_events(ctx.txns, p["max_gap_minutes"], p["min_forward_ratio"])
+    t, hit, order, lo, hi, forwarded, ratio = ev.t, ev.hit, ev.order, ev.lo, ev.hi, ev.forwarded, ev.ratio
     amounts = t["amount"].to_numpy(dtype=float)
-    cum = np.concatenate([[0.0], np.cumsum(amounts[order])])
-
-    in_key = dst_code.astype(np.int64) * shift + rel
-    lo = np.searchsorted(out_key_sorted, in_key, side="left")      # outflows at/after inflow time
-    hi = np.searchsorted(out_key_sorted, in_key + gap, side="right")
-    forwarded = cum[hi] - cum[lo]
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratio = np.where(amounts > 0, np.minimum(forwarded / amounts, 1.0), 0.0)
-    hit = ratio >= p["min_forward_ratio"]
+    if p.get("min_events") is not None:
+        counts = pd.Series(t["dst_account_id"].to_numpy()[hit]).value_counts()
+        repeat = set(counts[counts > p["min_events"]].index)
+        hit = hit & np.isin(t["dst_account_id"].to_numpy(), list(repeat))
     if not hit.any():
         return DetectorResult([])
 
     txn_ids = t["txn_id"].to_numpy()
+    currencies = t["currency"].to_numpy() if "currency" in t.columns else None
     dst = t["dst_account_id"].to_numpy()
     src = t["src_account_id"].to_numpy()
     by_acct: dict[str, dict] = {}
@@ -69,7 +54,7 @@ def rapid_pass_through(ctx: DetectorContext) -> DetectorResult:
         a = dst[i]
         out_idx = order[lo[i]:hi[i]]
         rec = by_acct.setdefault(a, {"in": [], "out": set(), "payers": set(), "payees": set(), "ratios": [],
-                                     "inflow": 0.0, "forwarded": 0.0})
+                                     "inflow": 0.0, "forwarded": 0.0, "currencies": set()})
         rec["in"].append(txn_ids[i])
         rec["out"].update(txn_ids[out_idx])
         rec["payers"].add(src[i])
@@ -77,6 +62,8 @@ def rapid_pass_through(ctx: DetectorContext) -> DetectorResult:
         rec["ratios"].append(ratio[i])
         rec["inflow"] += amounts[i]
         rec["forwarded"] += min(forwarded[i], amounts[i])
+        if currencies is not None:
+            rec["currencies"].add(currencies[i])
 
     flagged = set(by_acct)
     findings = []
@@ -90,6 +77,8 @@ def rapid_pass_through(ctx: DetectorContext) -> DetectorResult:
             details={"account": a, "events": len(r["in"]), "inflow_total": r["inflow"],
                      "forwarded_total": r["forwarded"], "mean_forward_ratio": float(np.mean(r["ratios"])),
                      "max_gap_minutes": p["max_gap_minutes"], "chain_next_accounts": chain_next,
+                     "min_events": p.get("min_events"),
+                     "currencies": sorted(r["currencies"]),
                      "throughput": r["forwarded"]},
             cypher_used=fmt_cypher(CYPHER_PASS, account=str(a), max_gap_minutes=round(p["max_gap_minutes"], 2),
                                    min_forward_ratio=p["min_forward_ratio"])))
@@ -232,31 +221,34 @@ CYPHER_STRUCT = ("MATCH (a:Account {id:$account})-[t:TRANSFERS_TO]->()\n"
 def structuring(ctx: DetectorContext) -> DetectorResult:
     det = "structuring"
     p = ctx.p(det)
-    thr, how = structuring_threshold(ctx.frames, p)
-    if thr is None:
-        return DetectorResult([], [f"Not evaluated: {how}"])
+    thresholds = structuring_threshold(ctx.frames, p)
+    found = {c: v for c, v in thresholds.items() if v[0] is not None}
+    notes = [f"structuring threshold [{c or 'all'}]: {how}" for c, (_, how) in thresholds.items()]
+    if not found:
+        return DetectorResult([], ["Not evaluated: " + "; ".join(how for _, how in thresholds.values())])
     if (why := _missing(ctx, det, "min_count")):
-        return DetectorResult([], [why])
-    near = near_threshold_counts(ctx.frames, p, thr)
-    counts = near.groupby(["k", "b"]).size().rename("n").reset_index()
-    hits = counts[counts["n"] > p["min_count"]].sort_values("n", ascending=False).drop_duplicates("k")
+        return DetectorResult([], [why] + notes)
+    near = near_threshold_counts(ctx.frames, p, found)
+    counts = near.groupby(["k", "cur", "b"]).size().rename("n").reset_index()
+    hits = counts[counts["n"] > p["min_count"]].sort_values("n", ascending=False).drop_duplicates(["k"])
     w = int(p["window_days"] * 86400)
     pop = ctx.populations.get(f"{det}.min_count")
-    sel = near.merge(hits[["k", "b"]], on=["k", "b"]).groupby("k")
+    sel = near.merge(hits[["k", "cur", "b"]], on=["k", "cur", "b"]).groupby("k")
     findings = []
     for _, row in hits.iterrows():
         g = sel.get_group(row["k"])
         start = pd.Timestamp(int(row["b"]) * w, unit="s", tz="UTC")
+        thr, how = found[row["cur"]]
         findings.append(Finding(
             type=det, detector=det, subjects=(_acct(row["k"]),), txn_ids=tuple(g["txn_id"]),
             strength=tail_strength(row["n"], pop, p.get("_min_count_percentile")),
             details={"account": row["k"], "near_threshold_txns": int(row["n"]), "threshold": thr,
-                     "threshold_source": how, "band": p["band"], "window_start": str(start),
-                     "window_days": p["window_days"]},
+                     "currency": row["cur"] or None, "threshold_source": how, "band": p["band"],
+                     "window_start": str(start), "window_days": p["window_days"]},
             cypher_used=fmt_cypher(CYPHER_STRUCT, account=str(row["k"]), low=round(thr * (1 - p["band"]), 2),
                                    threshold=thr, window_start=str(start),
                                    window_end=str(start + pd.Timedelta(seconds=w)), min_count=p["min_count"])))
-    return DetectorResult(findings, [f"structuring threshold: {how}"])
+    return DetectorResult(findings, notes)
 
 
 # -------------------------------------------------------------------------------- regular cadence
@@ -270,14 +262,16 @@ CYPHER_CADENCE = ("MATCH (a:Account {id:$src})-[t:TRANSFERS_TO]->(b:Account {id:
 def regular_cadence(ctx: DetectorContext) -> DetectorResult:
     det = "regular_cadence"
     p = ctx.p(det)
-    t = ctx.txns[["txn_id", "ts", "src_account_id", "dst_account_id", "amount"]]
-    size = t.groupby(["src_account_id", "dst_account_id"])["txn_id"].transform("size")
-    t = t[size >= p["min_occurrences"]].sort_values(["src_account_id", "dst_account_id", "ts"])
+    t = ctx.txns[["txn_id", "ts", "src_account_id", "dst_account_id", "amount"]].assign(
+        cur=ctx.txns["currency"].fillna("") if "currency" in ctx.txns.columns else "")
+    keys = ["src_account_id", "dst_account_id", "cur"]
+    size = t.groupby(keys)["txn_id"].transform("size")
+    t = t[size >= p["min_occurrences"]].sort_values(keys + ["ts"])
     if t.empty:
         return DetectorResult([])
-    same = (t["src_account_id"].eq(t["src_account_id"].shift())) & (t["dst_account_id"].eq(t["dst_account_id"].shift()))
+    same = np.logical_and.reduce([t[k].eq(t[k].shift()) for k in keys])
     t = t.assign(gap=np.where(same, t["ts"].diff().dt.total_seconds(), np.nan))
-    agg = t.groupby(["src_account_id", "dst_account_id"]).agg(
+    agg = t.groupby(keys).agg(
         n=("txn_id", "size"), gap_mean=("gap", "mean"), gap_std=("gap", "std"),
         amt_mean=("amount", "mean"), amt_std=("amount", "std"))
     agg["gap_cv"] = agg["gap_std"] / agg["gap_mean"]
@@ -285,14 +279,14 @@ def regular_cadence(ctx: DetectorContext) -> DetectorResult:
     hits = agg[(agg["gap_mean"] > 0) & (agg["gap_cv"] <= p["max_interval_cv"]) & (agg["amt_cv"] <= p["max_amount_cv"])]
     if hits.empty:
         return DetectorResult([])
-    ids = t.set_index(["src_account_id", "dst_account_id"])["txn_id"]
+    ids = t.set_index(keys)["txn_id"]
     findings = []
-    for (s, d), r in hits.iterrows():
+    for (s, d, cur), r in hits.iterrows():
         findings.append(Finding(
-            type=det, detector=det, subjects=(_acct(s), _acct(d)), txn_ids=tuple(ids.loc[(s, d)]),
+            type=det, detector=det, subjects=(_acct(s), _acct(d)), txn_ids=tuple(ids.loc[(s, d, cur)]),
             strength=float(1 - max(r["gap_cv"] / p["max_interval_cv"], r["amt_cv"] / p["max_amount_cv"]) / 2),
             details={"src": s, "dst": d, "payments": int(r["n"]), "mean_interval_days": r["gap_mean"] / 86400,
                      "interval_cv": float(r["gap_cv"]), "amount_cv": float(r["amt_cv"]),
-                     "mean_amount": float(r["amt_mean"])},
+                     "mean_amount": float(r["amt_mean"]), "currency": cur or None},
             cypher_used=fmt_cypher(CYPHER_CADENCE, src=str(s), dst=str(d))))
     return DetectorResult(findings)

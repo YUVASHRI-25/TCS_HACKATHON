@@ -1,29 +1,188 @@
-# Dataset -> canonical model mapping.  EMPTY until the dataset is profiled (Checkpoint 0).
+# SIFTLINE Synthetic Financial Crime Investigation Dataset v1.0 -> TRACE canonical model.
+# Proposed from docs/dataset_profile.md (Checkpoint 0). Every field: direct | derived | absent.
+# Canonical fields not listed are absent and are never imputed.
 #
-# Schema (validated by backend/trace/ingestion/mapping.py):
-#
-# source:
-#   adapter: csv | parquet | sql
-#   timezone: <IANA tz of naive timestamps in the source, e.g. as documented by the dataset>  # required if timestamps are naive
-#   tables:
-#     <table_name>:
-#       path: <file path relative to repo root>      # csv / parquet
-#       query: <SQL>                                 # sql adapter (with source.url)
-#       read_options: {}                             # passed to the adapter (sep, encoding, ...)
-#   url: <SQLAlchemy URL>                            # sql adapter only
-#
-# entities:
-#   <CanonicalEntity>:                               # Customer, Account, Transaction, Merchant, Device, IP,
-#     table: <table_name>                            # Location, Beneficiary, Complaint, Alert, WatchlistEntry
-#     fields:
-#       <canonical_field>:
-#         status: direct | derived | absent
-#         column: <source column>                    # direct
-#         derivation: <rule name>                    # derived (see ingestion/mapping.py DERIVATIONS)
-#         params: {}                                 # derived rule parameters
-#         note: <free text>                          # why derived/absent
-#
-# Every canonical field not listed is treated as absent.
+# Dataset facts that shaped this mapping (see docs/dataset_profile.md):
+#  - Timestamps are naive and the dataset does not document a timezone. They are DECLARED as UTC
+#    below. This affects display only; all relative timing (gaps, windows, ordering) is unchanged.
+#  - Every account transacts in all 5 currencies; no FX rates exist, so amounts are only ever
+#    compared within one currency.
+#  - No account opening date, merchant risk flag, customer address on the customer table, or
+#    account-level device/IP field exists. Detectors needing them are DISABLED, not approximated.
+#  - suspicious_ring_members is a label set: mapped to LabelledMember, REPORT ONLY.
 
-source: {}
-entities: {}
+source:
+  adapter: csv
+  timezone: UTC          # DECLARED, not documented by the dataset (display only). Confirm.
+  tables:
+    transactions: {path: data/raw/SIFTLINE_Dataset/transactions.csv}
+    accounts: {path: data/raw/SIFTLINE_Dataset/accounts.csv}
+    customers: {path: data/raw/SIFTLINE_Dataset/customers.csv}
+    devices: {path: data/raw/SIFTLINE_Dataset/devices.csv}
+    shared_devices: {path: data/raw/SIFTLINE_Dataset/shared_devices.csv}
+    ip_addresses: {path: data/raw/SIFTLINE_Dataset/ip_addresses.csv}
+    logins: {path: data/raw/SIFTLINE_Dataset/logins.csv}
+    merchants: {path: data/raw/SIFTLINE_Dataset/merchants.csv}
+    beneficiaries: {path: data/raw/SIFTLINE_Dataset/beneficiaries.csv}
+    entity_relationships: {path: data/raw/SIFTLINE_Dataset/entity_relationships.csv}
+    complaints: {path: data/raw/SIFTLINE_Dataset/complaints.csv}
+    alerts: {path: data/raw/SIFTLINE_Dataset/alerts.csv}
+    investigation_cases: {path: data/raw/SIFTLINE_Dataset/investigation_cases.csv}
+    watchlist_matches: {path: data/raw/SIFTLINE_Dataset/watchlist_matches.csv}
+    suspicious_ring_members: {path: data/raw/SIFTLINE_Dataset/suspicious_ring_members.csv}
+
+entities:
+  Transaction:
+    table: transactions
+    fields:
+      txn_id: {status: direct, column: transaction_id}
+      ts: {status: direct, column: timestamp}
+      src_account_id: {status: direct, column: sender_account_id}
+      dst_account_id: {status: direct, column: receiver_account_id}
+      amount: {status: direct, column: amount}
+      currency: {status: direct, column: currency}
+      txn_type: {status: direct, column: transaction_type}
+      channel: {status: direct, column: channel}
+      status: {status: direct, column: status}
+      device_id: {status: absent, note: "transactions carry no device"}
+      ip_id: {status: absent, note: "transactions carry no IP"}
+      merchant_id: {status: absent, note: "merchant payments are a separate table (merchant_transactions)"}
+      label: {status: absent, note: "no transaction-level label; ring membership is entity-level"}
+
+  Account:
+    table: accounts
+    fields:
+      account_id: {status: direct, column: account_id}
+      customer_id: {status: direct, column: customer_id}
+      bank_id: {status: direct, column: bank_id}
+      branch_id: {status: direct, column: branch_id}
+      account_type: {status: direct, column: account_type}
+      status: {status: direct, column: status}
+      open_date: {status: absent, note: "no opening date in the data"}
+
+  Customer:
+    table: customers
+    fields:
+      customer_id: {status: direct, column: customer_id}
+      name: {status: direct, column: name}
+      nationality: {status: direct, column: nationality}
+      occupation: {status: direct, column: occupation}
+      risk_rating: {status: direct, column: risk_rating}
+      kyc_status: {status: direct, column: kyc_status}
+      date_of_birth: {status: absent, note: "column exists but values fall in 2024-2025 (implausible for holders); not used"}
+      phone: {status: absent, note: "phones.csv is a separate table; values are unique (no shared phones)"}
+      email: {status: absent, note: "emails.csv is a separate table; values are unique (no shared emails)"}
+      address: {status: absent, note: "addresses.csv is a separate table; address texts are unique"}
+
+  Device:
+    table: devices
+    fields:
+      device_id: {status: direct, column: device_id}
+      fingerprint: {status: direct, column: fingerprint}
+      device_type: {status: direct, column: device_type}
+
+  DeviceUsage:
+    table: shared_devices
+    fields:
+      usage_id: {status: direct, column: shared_device_record_id}
+      device_id: {status: direct, column: device_id}
+      customer_id: {status: direct, column: customer_id}
+      first_seen: {status: direct, column: first_seen}
+      last_seen: {status: direct, column: last_seen}
+
+  IP:
+    table: ip_addresses
+    fields:
+      ip_id: {status: direct, column: ip_id}
+      address: {status: direct, column: ip_address}
+      isp: {status: direct, column: isp}
+      country: {status: direct, column: country}
+      network_type: {status: direct, column: network_type}
+
+  Login:
+    table: logins
+    fields:
+      login_id: {status: direct, column: login_id}
+      customer_id: {status: direct, column: customer_id}
+      device_id: {status: direct, column: device_id}
+      ip_id: {status: direct, column: ip_id}
+      ts: {status: direct, column: timestamp}
+      status: {status: direct, column: status}
+
+  Merchant:
+    table: merchants
+    fields:
+      merchant_id: {status: direct, column: merchant_id}
+      name: {status: direct, column: merchant_name}
+      category: {status: direct, column: merchant_category}
+      flagged: {status: absent, note: "no merchant risk flag in the data"}
+
+  Beneficiary:
+    table: beneficiaries
+    fields:
+      beneficiary_id: {status: direct, column: beneficiary_id}
+      customer_id: {status: direct, column: customer_id}
+      account_id: {status: direct, column: account_id}
+      beneficiary_type: {status: direct, column: beneficiary_type}
+      added_ts: {status: direct, column: registration_date}
+
+  Relationship:
+    table: entity_relationships
+    fields:
+      relationship_id: {status: direct, column: relationship_id}
+      entity_1_id: {status: direct, column: entity_1_id}
+      entity_2_id: {status: direct, column: entity_2_id}
+      relationship_type: {status: direct, column: relationship_type}
+      source: {status: direct, column: source}
+
+  Complaint:
+    table: complaints
+    fields:
+      complaint_id: {status: direct, column: complaint_id}
+      subject_id: {status: direct, column: customer_id}
+      subject_type: {status: derived, derivation: constant, params: {value: customer},
+                     note: "README: complaints.customer_id -> customers.customer_id"}
+      ts: {status: direct, column: timestamp}
+      category: {status: direct, column: complaint_type}
+      status: {status: direct, column: status}
+
+  Alert:
+    table: alerts
+    fields:
+      alert_id: {status: direct, column: alert_id}
+      subject_id: {status: direct, column: account_id}
+      subject_type: {status: derived, derivation: constant, params: {value: account},
+                     note: "README: alerts.account_id -> accounts.account_id"}
+      txn_id: {status: direct, column: transaction_id}
+      ts: {status: direct, column: created_at}
+      rule: {status: direct, column: rule}
+      severity: {status: direct, column: severity}
+      outcome: {status: absent, note: "outcome lives on investigation_cases (PriorCase.status)"}
+
+  PriorCase:
+    table: investigation_cases
+    fields:
+      case_id: {status: direct, column: case_id}
+      alert_id: {status: direct, column: alert_id}
+      status: {status: direct, column: status}
+      case_type: {status: direct, column: case_type}
+      opened_at: {status: direct, column: opened_at}
+
+  ScreeningMatch:
+    table: watchlist_matches
+    fields:
+      match_id: {status: direct, column: watchlist_match_id}
+      entity_id: {status: direct, column: entity_id}
+      list_type: {status: direct, column: list_type}
+      match_type: {status: direct, column: match_type}
+      confidence: {status: direct, column: match_confidence}
+      source: {status: direct, column: source}
+
+  LabelledMember:            # REPORT ONLY — never read by detectors, scoring or thresholds
+    table: suspicious_ring_members
+    fields:
+      label_id: {status: direct, column: ring_id}
+      entity_id: {status: direct, column: member_entity_id}
+      role: {status: direct, column: role}
+      typology: {status: direct, column: typology}
+      group_id: {status: absent, note: "ring_id is unique per row, so it does not group members into rings"}

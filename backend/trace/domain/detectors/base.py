@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from trace.domain.model.findings import Finding, Link
+from trace.domain.model.findings import Finding, Link, node_id
 
 EPOCH = pd.Timestamp("1970-01-01", tz="UTC")
 
@@ -24,6 +24,9 @@ class DetectorContext:
     params: dict[str, dict[str, Any]]
     links: list[Link] = field(default_factory=list)
     populations: dict[str, np.ndarray] = field(default_factory=dict)  # sorted metric populations
+    _owner: dict | None = field(default=None, repr=False)
+    _acct_ids: set = field(default_factory=set, repr=False)
+    _cust_ids: set = field(default_factory=set, repr=False)
 
     @property
     def txns(self) -> pd.DataFrame:
@@ -31,6 +34,27 @@ class DetectorContext:
 
     def p(self, detector: str) -> dict[str, Any]:
         return self.params.get(detector, {})
+
+    def entity_nodes(self, raw_id: Any, kind_hint: str | None = None) -> tuple[str, ...]:
+        """Resolve any entity id to network nodes: an account stays an account; a customer becomes the
+        customer's accounts (via Account.customer_id); anything else stays as its own node."""
+        if self._owner is None:
+            acc = self.frames.get("Account")
+            self._acct_ids = set(acc["account_id"]) if acc is not None else set()
+            self._owner = {}
+            if acc is not None and "customer_id" in acc.columns:
+                for a, c in zip(acc["account_id"], acc["customer_id"]):
+                    if pd.notna(c):
+                        self._owner.setdefault(c, []).append(a)
+            cust = self.frames.get("Customer")
+            self._cust_ids = set(cust["customer_id"]) if cust is not None else set(self._owner)
+        if raw_id in self._acct_ids or kind_hint == "account":
+            return (node_id("account", raw_id),)
+        if raw_id in self._owner:
+            return tuple(node_id("account", a) for a in sorted(self._owner[raw_id]))
+        if raw_id in self._cust_ids or kind_hint == "customer":
+            return (node_id("customer", raw_id),)
+        return (node_id(kind_hint or "entity", raw_id),)
 
     def has(self, entity: str, *fields: str) -> bool:
         df = self.frames.get(entity)

@@ -73,3 +73,17 @@ def test_banned_words_filter():
         assert_clean("criminals moved money")
     text, removed = scrub("Funds moved quickly. The launderer is X. Review KYC.")
     assert "launderer" not in text and len(removed) == 1
+
+
+def test_grouping_is_independent_of_input_order():
+    import random
+    fs = [Finding("a", (f"account:{i}", f"account:{i + 1}"), (), 1.0, {}, "") for i in range(0, 120, 2)]
+    fs += [Finding("b", (f"account:{i}",), (), 1.0, {}, "") for i in range(0, 120, 3)]
+    pairs = {(f"account:{i}", f"account:{i + 2}") for i in range(118)}
+    base = None
+    for seed in range(4):
+        random.Random(seed).shuffle(fs)
+        kept, _, _ = group(list(fs), set(pairs), {"a": "risk", "b": "risk"}, 15, 2)
+        snap = sorted(sorted(n.members) for n in kept)
+        base = base or snap
+        assert snap == base
