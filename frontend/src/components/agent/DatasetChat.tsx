@@ -39,7 +39,9 @@ export function DatasetChat({ datasetId, name, autoAsk, onClose }: { datasetId: 
     setMsgs([]);
     if (autoAsk) void send("Summarize this dataset and what it can or cannot support for a financial-crime investigation.", []);
   }, [datasetId]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [msgs, busy]);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "end" });
+  }, [msgs, busy]);
 
   return (
     <div className="fixed bottom-4 right-4 z-40 flex h-[32rem] w-[24rem] max-w-[calc(100vw-2rem)] flex-col rounded-xl border border-line bg-panel shadow-xl" role="dialog" aria-label="Dataset assistant">
