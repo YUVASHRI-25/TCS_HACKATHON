@@ -10,7 +10,12 @@ export default {
         mono: ["JetBrains Mono", "ui-monospace", "monospace"],
       },
       colors: {
-        severity: { high: "#ef4444", medium: "#f59e0b", low: "#64748b" },
+        canvas: "#0b1020",
+        panel: "#111830",
+        panel2: "#172040",
+        line: "#24304f",
+        muted: "#8b98b8",
+        sev: { high: "#ef4444", medium: "#f59e0b", low: "#64748b" },
       },
     },
   },

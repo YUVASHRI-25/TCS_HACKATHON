@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -29,6 +30,17 @@ class Settings(BaseSettings):
     llm_model: str | None = None
 
     gnn_backend: Literal["pyg", "node2vec"] = "node2vec"
+
+    @field_validator("database_url")
+    @classmethod
+    def _anchor_sqlite(cls, v: str) -> str:
+        """Relative SQLite paths resolve against the repo root, not the process cwd."""
+        prefix = "sqlite:///"
+        if v.startswith(prefix):
+            p = Path(v[len(prefix):])
+            if not p.is_absolute():
+                return prefix + (REPO_ROOT / p).as_posix()
+        return v
 
     def path(self, p: Path) -> Path:
         return p if p.is_absolute() else REPO_ROOT / p

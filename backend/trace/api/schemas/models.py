@@ -122,6 +122,49 @@ class EntityOut(BaseModel):
     derived: bool
 
 
+class WhySuspicious(BaseModel):
+    signal: str
+    label: str
+    evidence_ids: list[str]
+
+
+class ExplanationConsidered(BaseModel):
+    id: str
+    label: str
+    status: str
+    fit: float | None
+    reason: str
+
+
+class KeyQuestions(BaseModel):
+    """The brief's four questions, answered for every flagged network."""
+    why_suspicious: list[WhySuspicious]
+    evidence: list[str]
+    legitimate_explanations: list[ExplanationConsidered]
+    next_steps: list[str]
+
+
+class Exposure(BaseModel):
+    suspicious_txns: int
+    total: float
+    by_currency: dict[str, float]
+    currency_known: bool = False
+    max_chain_throughput: float
+    note: str | None = None
+
+
+class Adjudicated(BaseModel):
+    score: float
+    tier: Tier
+    changes: list[dict[str, Any]]
+    note: str
+
+
+class DisabledCapability(BaseModel):
+    id: str
+    reason: str
+
+
 class CaseSummary(BaseModel):
     id: str
     tier: Tier
@@ -146,14 +189,14 @@ class CaseOut(BaseModel):
     score_breakdown: ScoreBreakdownOut
     counterfactuals: list[CounterfactualOut]
     next_steps: list[NextStepOut]
-    exposure: dict[str, Any]
-    key_questions: dict[str, Any]
+    exposure: Exposure
+    key_questions: KeyQuestions
     capabilities_used: list[str]
-    capabilities_disabled: list[dict[str, str]]
+    capabilities_disabled: list[DisabledCapability]
     guardrail_notice: str
     finding_types: list[str]
     adjudications: dict[str, str] = {}
-    adjudicated: dict[str, Any] | None = None
+    adjudicated: Adjudicated | None = None
 
 
 class GraphNode(BaseModel):

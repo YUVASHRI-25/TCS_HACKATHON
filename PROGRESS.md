@@ -2,34 +2,43 @@
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 – Scaffold, profile, map | BUILT, waiting on dataset | Profiler, mapping, normalise, validate, capabilities done; needs the dataset for Checkpoint 0 |
-| 1 – Domain, graph, detectors | BUILT (dataset-independent) | 13 detectors + entity resolution + sanctions match + IsolationForest; graph; thresholds derived from data |
-| 2 – Case engine (Checkpoint A) | BUILT, waiting on dataset | Grouping, evidence IDs, hypotheses, alternatives, scoring, counterfactuals, next steps, exposure |
-| 3 – Pipeline & API | BUILT | `make pipeline`; 19 endpoints incl. review, audit (hash chain), dossier PDF, what-if |
-| 4 – Frontend (Checkpoint B) | NOT STARTED | Spec: build only against a backend serving real data |
-| 5 – Agents, narrative, trust layer | NOT STARTED | llm_audit table + endpoint exist |
-| 6 – What-if & next-best action | BACKEND BUILT | Pure recompute, /whatif, /adjudicate, /next-best-actions; effort minutes not yet supplied |
-| 7 – Real-time replay | NOT STARTED | |
-| 8 – Evaluation | PARTIAL | /api/metrics: 5 measures computable now; baselines need the dataset |
+| 0 – Scaffold, profile, map | DONE | SIFTLINE profiled (`docs/dataset_profile.md`), `config/mapping.yaml` written; 14 capabilities enabled, 2 disabled with reasons |
+| 1 – Domain, graph, detectors | DONE | 13 detectors + screening + IsolationForest; currency-aware; temporal cycle search |
+| 2 – Case engine (Checkpoint A) | DONE, results reviewed | 21 cases (HIGH 10 / MEDIUM 4 / LOW 7); label report at chance level (see below) |
+| 3 – Pipeline & API | DONE | `make pipeline` ≈ 4 s on SIFTLINE; 19 endpoints |
+| 4 – Frontend (Checkpoint B) | DONE — awaiting review | Types generated from /openapi.json; tsc strict + eslint clean; browser QA: 0 console errors, all tabs render |
+| 5 – Agents, narrative, trust layer | NOT STARTED | Template narrative with citations in the UI; llm_audit table exists |
+| 6 – What-if & next-best action | DONE (backend + UI) | effort minutes still unset |
+| 7 – Real-time replay | NOT STARTED | UI shows a real "not available" state |
+| 8 – Evaluation | PARTIAL | Success measures + member-level label report; baselines not built |
 | 9 – Optional intelligence | NOT STARTED | |
 | 10 – Finish | NOT STARTED | |
 
-## Verified (without the real dataset)
-- 36 tests pass (unit tests on hand-built inputs + end-to-end pipeline/API on a hand-built CSV inside tests/),
-  stable under 6 different PYTHONHASHSEED values. ruff clean.
-- With no mapping, every endpoint returns a real empty state; `make pipeline` exits 2 with a clear message.
+## Dataset facts (SIFTLINE v1.0, synthetic)
+- 25,000 transactions among 800 accounts / 500 customers, 2024-01-01 → 2025-09-16, 5 currencies; every account
+  sends in all 5 currencies, so amounts are only compared within a currency (no FX rates in the data).
+- Dense, near-uniform transfer graph (24.5k distinct pairs; 19–52 counterparties per account); categorical
+  fields are near-uniform (e.g. statuses ~1/3 each). Behaviour looks randomly generated.
+- `suspicious_ring_members` (120 rows) is mapped to `LabelledMember` and used for reporting only.
+- Label report: member precision 0.137 vs base rate 0.149 (lift 0.92); 82% of networks contain a labelled member
+  vs 74% expected by chance. TRACE's surfaced networks are NOT enriched for the labelled ring members on this data.
+  Reported as measured; nothing was tuned toward the labels.
 
-## Known issues / decisions for the user
-- `config/detectors.yaml`: values marked `confirm` (window sizes, percentiles, forward ratio) and two weights not in
-  the spec (`fan_out` 15, `burst_velocity` 10; penalty `SHARED_BUSINESS` 10) need confirmation.
-- `config/catalogues.yaml`: `whatif_facts.*.effort_minutes` are null (next-best actions rank by shift only until set);
-  `alternative_params.business_type_values` empty (supplier/shared-business alternatives show "cannot evaluate").
-- `prior_escalation.escalated_outcomes` empty until the dataset's alert vocabulary is known.
-- Python is the shared Anaconda 3.13 env. Installing sse-starlette upgraded starlette, which required FastAPI 0.162;
-  pip reported opentelemetry version conflicts in that shared env. A dedicated venv is recommended.
-- The package is named `trace` (collides with stdlib `trace`); run via `make`/`scripts`/from `backend/`.
-- Performance on multi-million-row data not yet measured (detectors are vectorised; cycle enumeration is capped).
+## Decisions taken that need confirmation
+- Timezone declared UTC (dataset undocumented) — display only.
+- Transactions of every status (COMPLETED / PENDING / REVERSED) are analysed; REVERSED could be excluded.
+- Device sharing reads `shared_devices` only (logins put 4–27 customers on every device); IP sharing reads logins.
+- Vocabulary: escalated = `ESCALATED`; exact screening = `EXACT`; business = `BUSINESS`; family = `FAMILY`;
+  business relationships = `EMPLOYEE`, `BUSINESS_ASSOCIATE`; office network = `CORPORATE`.
+- Percentiles/params marked `confirm` in `config/detectors.yaml`; weights fan_out 15, burst 10, SHARED_BUSINESS 10 not in spec.
+- Entity resolution: names are unique synthetic strings and phones/emails are unique, so it finds nothing (correct).
+
+## Known issues
+- Python env is the shared Anaconda 3.13 (FastAPI upgraded to 0.162 there; opentelemetry conflicts reported by pip).
+- Graph minimap not implemented (fit-to-view control instead).
+- Frontend bundle is 1.3 MB (one chunk); code-splitting not done.
+- A relative DATABASE_URL in .env used to resolve against the process cwd; now anchored to the repo root.
+- Package name `trace` collides with stdlib; run via `make` / `scripts` / from `backend/`.
 
 ## Next step
-1. Receive dataset → profile → propose mapping → CHECKPOINT 0.
-2. Run pipeline → cases table + score distribution (+ label report if labels exist) → CHECKPOINT A.
+CHECKPOINT B review. Then Phase 5 (agents + cited narrative + verifier + pseudonymisation).
