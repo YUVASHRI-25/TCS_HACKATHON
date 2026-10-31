@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Play, Upload } from "lucide-react";
+import { MessageSquare, Play, Upload } from "lucide-react";
 import { useDatasets, useRunDataset, useRuns, useUpload } from "@/hooks/useApi";
 import { Badge, Button, Card, EmptyState, ErrorState, SkeletonRows } from "@/components/ui/primitives";
+import { DatasetChat } from "@/components/agent/DatasetChat";
 import { num, ts } from "@/lib/format";
 
 const STATUS_TONE = { ready: "blue", active: "green", rejected: "red", running: "amber", succeeded: "green", failed: "red" } as const;
@@ -15,6 +16,7 @@ export function DatasetsPage() {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [chat, setChat] = useState<{ id: number; name: string; auto: boolean } | null>(null);
   const running = (runs.data ?? []).some((r) => r.status === "running");
 
   // When a run finishes, everything derived from the analysis is stale.
@@ -46,7 +48,7 @@ export function DatasetsPage() {
               className="mt-1 block text-xs file:mr-2 file:rounded file:border-0 file:bg-slate-700 file:px-2 file:py-1 file:text-slate-200" />
           </label>
           <Button variant="primary" disabled={!files.length || upload.isPending}
-            onClick={() => upload.mutate({ name, files }, { onSuccess: () => { setFiles([]); setName(""); } })}>
+            onClick={() => upload.mutate({ name, files }, { onSuccess: (d) => { setFiles([]); setName(""); setChat({ id: d.id, name: d.name, auto: true }); } })}>
             <Upload className="h-4 w-4" /> {upload.isPending ? "Uploading…" : "Upload & validate"}
           </Button>
         </div>
@@ -70,7 +72,10 @@ export function DatasetsPage() {
               <Badge tone={STATUS_TONE[d.status]}>{d.status === "active" ? "analysed (current)" : d.status}</Badge>
               <span className="text-xs text-muted">by {d.created_by} · {ts(d.created_at)}</span>
               <span className="text-xs text-muted">{d.files.map((f) => `${f.table}${f.rows !== null ? ` (${num(f.rows)} rows)` : ""}`).join(", ")}</span>
-              <Button className="ml-auto" disabled={d.status === "rejected" || running || runDs.isPending}
+              <Button className="ml-auto" onClick={() => setChat({ id: d.id, name: d.name, auto: false })}>
+                <MessageSquare className="h-3.5 w-3.5" /> Ask AI
+              </Button>
+              <Button disabled={d.status === "rejected" || running || runDs.isPending}
                 onClick={() => runDs.mutate(d.id)}>
                 <Play className="h-3.5 w-3.5" /> Run analysis
               </Button>
@@ -98,6 +103,7 @@ export function DatasetsPage() {
           })}</tbody>
         </table>
       </Card>
+      {chat && <DatasetChat key={chat.id} datasetId={chat.id} name={chat.name} autoAsk={chat.auto} onClose={() => setChat(null)} />}
     </div>
   );
 }

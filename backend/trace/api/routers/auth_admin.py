@@ -289,3 +289,26 @@ def system_health(_: dict = Depends(require_admin), c: Container = Depends(get_c
 @router.get("/admin/cases")
 def all_cases(_: dict = Depends(require_admin), c: Container = Depends(get_container)) -> list[dict[str, Any]]:
     return c.cases.list(limit=5000)
+
+
+class DatasetChatIn(BaseModel):
+    question: str = Field(min_length=2, max_length=1000)
+    history: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/datasets/{dataset_id}/chat")
+def dataset_chat(dataset_id: int, body: DatasetChatIn, user: dict = Depends(current_user),
+                 c: Container = Depends(get_container)) -> dict[str, Any]:
+    """LLM reasoning about an uploaded dataset, grounded in a profile computed from its real rows."""
+    from trace.application import dataset_chat as dc
+    from trace.intelligence.llm.client import LlmError
+
+    d = c.datasets.get(dataset_id)
+    if d is None:
+        raise HTTPException(404, "dataset not found")
+    try:
+        return dc.ask(c, d, body.question, body.history, c.llm, user["username"])
+    except LlmError as e:
+        raise HTTPException(503, f"LLM unavailable: {e}") from e
+    except dc.DatasetChatError as e:
+        raise HTTPException(422, str(e)) from e
