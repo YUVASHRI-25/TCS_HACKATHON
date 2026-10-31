@@ -17,7 +17,6 @@
 ## Known issues
 - No dataset provided yet: `config/mapping.yaml`, `config/detectors.yaml`, `config/catalogues.yaml`
   are empty schemas; `docs/dataset_profile.md` not generated.
-- `docs/challenge.md` awaits the full brief text.
 - Python in this environment is 3.13 (Anaconda); spec targets 3.11; no venv active yet.
 
 ## Next step
