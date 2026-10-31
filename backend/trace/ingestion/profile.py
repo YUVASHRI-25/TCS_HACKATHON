@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import sys
 from dataclasses import dataclass, field
@@ -24,6 +23,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from trace.domain.detectors.population import threshold_clustering
 
 _FILE_EXT = (".csv", ".tsv", ".txt", ".parquet", ".pq", ".csv.gz")
 _PCTS = [0.01, 0.05, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999]
@@ -134,25 +135,6 @@ def _round_share(x: np.ndarray) -> dict[str, float]:
         out[f"multiple_of_{base}"] = round(float(np.mean(np.isclose(np.mod(x, base), 0) |
                                                          np.isclose(np.mod(x, base), base))), 4)
     return out
-
-
-def threshold_clustering(x: np.ndarray, band: float = 0.1) -> list[dict[str, Any]]:
-    """For round marks inside the observed range (1, 2, 5 x 10^k), compare the count just below the
-    mark ([T*(1-band), T)) with just above ([T, T*(1+band))). A high below/above ratio is a
-    candidate structuring threshold for human review; nothing is assumed about any jurisdiction."""
-    x = x[np.isfinite(x) & (x > 0)]
-    if x.size < 100:
-        return []
-    lo, hi = np.percentile(x, 5), np.percentile(x, 99.5)
-    marks = sorted({m * 10 ** k for k in range(int(math.floor(math.log10(lo))), int(math.ceil(math.log10(hi))) + 1)
-                    for m in (1, 2, 5) if lo <= m * 10 ** k <= hi})
-    res = []
-    for t in marks:
-        below = int(((x >= t * (1 - band)) & (x < t)).sum())
-        above = int(((x >= t) & (x < t * (1 + band))).sum())
-        res.append({"mark": t, "below": below, "above": above,
-                    "ratio_below_above": round(below / above, 3) if above else None})
-    return sorted(res, key=lambda r: -(r["ratio_below_above"] or 0))[:8]
 
 
 def _num_profile(s: pd.Series) -> dict[str, Any]:

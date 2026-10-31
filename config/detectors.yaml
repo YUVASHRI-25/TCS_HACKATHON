@@ -1,22 +1,154 @@
-# Detector thresholds, weights and tiers.  EMPTY until the dataset is profiled.
+# Detector parameters, threshold derivations, weights and tiers.
 #
-# Thresholds are DERIVED from the dataset's own distributions by the pipeline. Each entry records
-# its derivation so it can be audited, e.g.:
+# Two kinds of values live here:
+#   params:  ANALYST PARAMETERS — structural/methodological choices (window sizes, cycle lengths).
+#            Not data values. Marked "confirm" where the spec did not fix them.
+#   derive:  THRESHOLDS — never typed in. The pipeline computes each one from the dataset's own
+#            distribution of the named population metric and writes the value plus its derivation to
+#            config/detectors.thresholds.yaml (generated; do not edit by hand).
+#            A derive spec: {metric: <population metric>, percentile: <0-100>, multiply_by_param: <param>?}
 #
-# thresholds:
-#   <detector>:
-#     <param>:
-#       value: <number>
-#       derivation: "<percentile / rule used, computed on which column/population>"
-#
-# weights:        { <signal>: <points> }
-# penalties:      { <alternative>: <weight> }
-# bonus_per_extra_signal_type: <points>
-# ml_cap: <points>
-# min_deterministic_finding_types: <int>
-# tiers:          { high: <min score>, medium: <min score> }
+# Values marked "spec" come from the build brief. Do not tune any of these against a label set that is
+# also reported on.
 
-thresholds: {}
-weights: {}
-penalties: {}
-tiers: {}
+case_rules:
+  min_deterministic_finding_types: 2   # spec. If this yields too few cases, REPORT it; do not lower silently.
+  bonus_per_extra_signal_type: 5       # spec: +5 per independent signal type beyond 2
+  ml_cap: 20                           # spec: ML signals capped at 20 points combined
+  max_network_size: 60                 # confirm: components larger than this are split with Louvain
+
+tiers:                                 # spec
+  high: 70
+  medium: 40
+
+# Points = weight x finding strength (0-1), max strength per signal type in the case.
+weights:
+  rapid_pass_through: 25               # spec
+  cycle: 25                            # spec
+  structuring: 20                      # spec
+  shared_device_unrelated: 20          # spec
+  flagged_merchant: 15                 # spec
+  fan_in: 15                           # spec
+  new_account_large_inflow: 10         # spec
+  possible_same_entity: 10             # spec
+  shared_ip: 8                         # spec
+  complaint_cluster: 8                 # spec
+  sanctions_potential_match: 6         # spec
+  prior_escalation: 4                  # spec
+  fan_out: 15                          # NOT IN SPEC — mirrors fan_in; confirm
+  burst_velocity: 10                   # NOT IN SPEC — confirm
+
+ml_weights:
+  isolation_forest: 20                 # capped by case_rules.ml_cap anyway
+
+# Penalty = alternative fit (0-1) x weight
+penalties:                             # spec
+  FAMILY_HOUSEHOLD: 25
+  LEGITIMATE_SUPPLIER_TRADE: 25
+  PAYROLL: 30
+  OFFICE_NETWORK: 10
+  COMMON_NAME_COINCIDENCE: 10
+  SHARED_BUSINESS: 10                  # NOT IN SPEC — confirm
+
+resolution:
+  # Confidence attached to each kind of identifier agreement (POSSIBLE_SAME_ENTITY links; never merges).
+  exact_identifier_confidence:         # confirm
+    national_id: 0.95
+    email: 0.85
+    phone: 0.8
+  name_min_score: 90                   # confirm: rapidfuzz token_sort_ratio, 0-100
+  name_only_confidence_scale: 0.6      # confirm: name-only match confidence = score/100 x scale
+  max_block_size: 200                  # blocks larger than this are skipped and reported (too generic to compare)
+
+detectors:
+  rapid_pass_through:
+    params:
+      min_forward_ratio: 0.8           # confirm: share of an inflow forwarded on ("X%" in spec)
+    derive:
+      max_gap_minutes: {metric: hold_time_minutes, percentile: 10}   # confirm percentile
+
+  cycle:
+    params:
+      min_length: 3                    # spec
+      max_length: 6                    # spec
+      amount_tolerance: 0.2            # confirm: max relative spread of hop amounts
+      max_cycles: 20000                # safety cap on enumeration; reported if hit
+    derive:
+      max_span_minutes: {metric: hold_time_minutes, percentile: 90, multiply_by_param: max_length}
+
+  fan_in:
+    params:
+      window_days: 7                   # confirm
+    derive:
+      min_counterparties: {metric: distinct_payers_per_window, percentile: 99}
+
+  fan_out:
+    params:
+      window_days: 7                   # confirm
+    derive:
+      min_counterparties: {metric: distinct_payees_per_window, percentile: 99}
+
+  structuring:
+    params:
+      reporting_threshold: null        # set ONLY if a documented threshold applies to this data;
+                                       # otherwise the pipeline looks for clustering below round marks
+      band: 0.1                        # confirm: "just under" = [T*(1-band), T)
+      min_clustering_ratio: 2.0        # confirm: below/above count ratio needed to accept a detected mark
+      window_days: 7                   # confirm
+    derive:
+      min_count: {metric: near_threshold_count_per_window, percentile: 99}
+
+  new_account_large_inflow:
+    params:
+      new_account_days: 30             # confirm
+    derive:
+      min_amount: {metric: inflow_amount, percentile: 99}
+
+  burst_velocity:
+    params:
+      window_minutes: 60               # confirm
+    derive:
+      min_txns: {metric: txns_per_account_window, percentile: 99.9}
+
+  regular_cadence:                     # context signal: supports the PAYROLL alternative, adds no risk points
+    params:
+      min_occurrences: 4               # confirm
+      max_interval_cv: 0.15            # confirm: coefficient of variation of gaps between payments
+      max_amount_cv: 0.1               # confirm
+
+  shared_device:
+    params:
+      min_accounts: 2
+    derive:
+      large_share_accounts: {metric: accounts_per_device, percentile: 99}
+
+  shared_ip:
+    params:
+      min_accounts: 2
+    derive:
+      large_share_accounts: {metric: accounts_per_ip, percentile: 99}
+
+  complaint_cluster:
+    params:
+      window_days: 30                  # confirm
+    derive:
+      min_complaints: {metric: complaints_per_subject_window, percentile: 99}
+
+  prior_escalation:
+    params:
+      escalated_outcomes: []           # dataset vocabulary: fill from the profile's Alert.outcome values
+
+  sanctions_potential_match:
+    params:
+      min_name_score: 90               # confirm
+
+  flagged_merchant:
+    params: {}
+
+  isolation_forest:
+    params:
+      n_estimators: 200
+      random_state: 0
+      max_samples: 256
+    derive:
+      min_score: {metric: anomaly_score, percentile: 99}

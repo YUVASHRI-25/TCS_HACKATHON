@@ -1,11 +1,148 @@
-# Fixed catalogues the deterministic engine and the LLM agents choose from.  EMPTY until Phase 2.
-#
-# typologies:    { <ID>: { label, description, supporting_signals: [], next_steps: [] } }
-# alternatives:  { <ID>: { label, description, required_fields: [], fit_rule: <rule name> } }
-# next_steps:    { <ID>: { label, description } }            # never punitive
-# whatif_facts:  { <ID>: { label, affects: { signal | alternative }, effort_minutes } }  # effort = assumption
+# Fixed catalogues. The deterministic engine and LLM agents may only choose from these IDs.
+# Entries come from the build brief. Wording is policy-safe: nothing here is punitive.
 
-typologies: {}
-alternatives: {}
-next_steps: {}
-whatif_facts: {}
+# Signal roles: risk signals add points; context signals only feed alternatives.
+# Typologies: requires_any = defining signals; a typology is proposed only if one of them is present.
+signals:
+  rapid_pass_through: {role: risk, label: "Rapid pass-through of funds"}
+  cycle: {role: risk, label: "Circular flow of funds"}
+  fan_in: {role: risk, label: "Many distinct payers into one account"}
+  fan_out: {role: risk, label: "Many distinct payees from one account"}
+  structuring: {role: risk, label: "Repeated amounts just below a threshold"}
+  new_account_large_inflow: {role: risk, label: "Large inflow soon after account opening"}
+  burst_velocity: {role: risk, label: "Burst of transactions in a short window"}
+  shared_device_unrelated: {role: risk, label: "Device shared by accounts of different holders"}
+  shared_ip: {role: risk, label: "IP address shared by accounts of different holders"}
+  flagged_merchant: {role: risk, label: "Payments to a flagged merchant"}
+  complaint_cluster: {role: risk, label: "Cluster of complaints"}
+  sanctions_potential_match: {role: risk, label: "Potential watchlist name match requiring human review"}
+  prior_escalation: {role: risk, label: "Prior escalated alert"}
+  possible_same_entity: {role: risk, label: "Records that may belong to the same person"}
+  regular_cadence: {role: context, label: "Regular periodic payments"}
+  isolation_forest: {role: model, label: "Unsupervised anomaly signal (model)"}
+
+typologies:
+  MULE_NETWORK:
+    label: "Possible money-mule network"
+    description: "Funds received from many sources and forwarded on quickly through accounts that may be controlled together."
+    supporting_signals: [rapid_pass_through, fan_in, fan_out, new_account_large_inflow, shared_device_unrelated, burst_velocity]
+    requires_any: [rapid_pass_through, new_account_large_inflow]
+    next_steps: [request_kyc_documents, verify_source_of_funds, interview_account_holders, compare_device_fingerprints]
+  CIRCULAR_LAYERING:
+    label: "Possible circular layering"
+    description: "Funds that return to their origin through a chain of accounts with similar amounts."
+    supporting_signals: [cycle, rapid_pass_through]
+    requires_any: [cycle]
+    next_steps: [verify_source_of_funds, review_counterparty_relationships, request_kyc_documents]
+  STRUCTURING:
+    label: "Possible structuring"
+    description: "Repeated transactions clustered just below a threshold."
+    supporting_signals: [structuring, burst_velocity]
+    requires_any: [structuring]
+    next_steps: [verify_source_of_funds, review_transaction_purpose]
+  COORDINATED_ACCOUNT_CONTROL:
+    label: "Possible coordinated account control"
+    description: "Several accounts that appear to share devices, network addresses or identity attributes."
+    supporting_signals: [shared_device_unrelated, shared_ip, possible_same_entity, burst_velocity]
+    requires_any: [shared_device_unrelated, shared_ip, possible_same_entity]
+    next_steps: [compare_device_fingerprints, verify_ip_nat, request_kyc_documents, interview_account_holders]
+  MERCHANT_RISK:
+    label: "Possible merchant-linked risk"
+    description: "Activity concentrated on merchants that are flagged or subject to complaints."
+    supporting_signals: [flagged_merchant, complaint_cluster]
+    next_steps: [review_merchant_history, verify_merchant_registration]
+  WATCHLIST_PROXIMITY:
+    label: "Potential watchlist proximity requiring human review"
+    description: "A network member has a potential watchlist name match or prior escalation."
+    supporting_signals: [sanctions_potential_match, prior_escalation]
+    next_steps: [clear_sanctions_match, review_prior_alerts]
+
+alternatives:
+  FAMILY_HOUSEHOLD:
+    label: "Family or household"
+    description: "Accounts belong to members of one household who share devices, addresses and transfer money between themselves."
+    next_step_if_unknown: verify_household
+  OFFICE_NETWORK:
+    label: "Shared office or network infrastructure"
+    description: "A shared IP reflects a corporate network, NAT gateway or public Wi-Fi rather than common control."
+    next_step_if_unknown: verify_ip_nat
+  LEGITIMATE_SUPPLIER_TRADE:
+    label: "Legitimate supplier trade"
+    description: "Flows reflect ordinary buying and selling between business counterparties."
+    next_step_if_unknown: verify_supplier_contract
+  PAYROLL:
+    label: "Payroll or regular salary payments"
+    description: "Fan-out or repeated amounts reflect periodic salary or benefit payments."
+    next_step_if_unknown: review_transaction_purpose
+  SHARED_BUSINESS:
+    label: "Shared business operation"
+    description: "Accounts are operated by one legitimate business (e.g. treasury, sub-accounts)."
+    next_step_if_unknown: request_kyc_documents
+  COMMON_NAME_COINCIDENCE:
+    label: "Common-name coincidence"
+    description: "A name-based match reflects a common name rather than the same person."
+    next_step_if_unknown: request_kyc_documents
+
+# Dataset vocabulary the alternative rules need. Filled from the profile, confirmed by the data owner.
+alternative_params:
+  business_type_values: []             # Account.account_type / Customer.customer_type values that mean "business"
+
+next_steps:
+  request_kyc_documents: {label: "Request KYC documents", description: "Request and compare identity documents for the account holders."}
+  verify_ip_nat: {label: "Verify whether the IP is a shared network (NAT)", description: "Check whether the shared IP belongs to a corporate network, ISP NAT or public hotspot."}
+  review_merchant_history: {label: "Review merchant history", description: "Review the merchant's onboarding, complaint and chargeback history."}
+  verify_merchant_registration: {label: "Verify merchant registration", description: "Confirm the merchant's legal registration and business activity."}
+  interview_account_holders: {label: "Interview account holders", description: "Contact the holders to understand the purpose of the flows."}
+  compare_device_fingerprints: {label: "Compare device fingerprints", description: "Compare device attributes and session history across the accounts."}
+  verify_source_of_funds: {label: "Verify source of funds", description: "Request documentation of where the incoming funds originated."}
+  review_counterparty_relationships: {label: "Review counterparty relationships", description: "Establish whether the accounts in the loop have a documented business relationship."}
+  review_transaction_purpose: {label: "Review transaction purpose", description: "Check payment references and supporting documents for the stated purpose."}
+  verify_household: {label: "Verify household relationship", description: "Check whether the holders are members of the same household."}
+  verify_supplier_contract: {label: "Verify supplier contract", description: "Request contracts or invoices supporting the trade relationship."}
+  clear_sanctions_match: {label: "Review potential watchlist match", description: "Compare full identifiers against the watchlist entry; a name match alone is not a match."}
+  review_prior_alerts: {label: "Review prior alerts", description: "Read previous investigations and their outcomes for the entity."}
+
+# What-if facts an investigator can establish. `affects` names the signal or alternative it changes.
+# effect: remove_signal | set_alternative_fit (value) | confirm_signal
+# effort_minutes: ASSUMPTION used to rank next-best actions — to be supplied/confirmed by the team.
+whatif_facts:
+  ip_is_corporate_nat:
+    label: "IP is a corporate NAT / shared network"
+    on_confirmed: {set_alternative_fit: {OFFICE_NETWORK: 1.0}}
+    on_refuted: {set_alternative_fit: {OFFICE_NETWORK: 0.0}}
+    effort_minutes: null
+  accounts_same_household:
+    label: "Accounts belong to one household"
+    on_confirmed: {set_alternative_fit: {FAMILY_HOUSEHOLD: 1.0}}
+    on_refuted: {set_alternative_fit: {FAMILY_HOUSEHOLD: 0.0}}
+    effort_minutes: null
+  supplier_contract_verified:
+    label: "Supplier contract verified"
+    on_confirmed: {set_alternative_fit: {LEGITIMATE_SUPPLIER_TRADE: 1.0}}
+    on_refuted: {set_alternative_fit: {LEGITIMATE_SUPPLIER_TRADE: 0.0}}
+    effort_minutes: null
+  merchant_registration_verified:
+    label: "Merchant registration verified"
+    on_confirmed: {remove_signal: [flagged_merchant]}
+    on_refuted: {}
+    effort_minutes: null
+  kyc_docs_match_across_accounts:
+    label: "KYC documents match across accounts (same person)"
+    on_confirmed: {set_alternative_fit: {SHARED_BUSINESS: 1.0, COMMON_NAME_COINCIDENCE: 0.0}}
+    on_refuted: {remove_signal: [possible_same_entity], set_alternative_fit: {COMMON_NAME_COINCIDENCE: 1.0}}
+    effort_minutes: null
+  device_ownership_confirmed_shared:
+    label: "Device legitimately shared (confirmed)"
+    on_confirmed: {remove_signal: [shared_device_unrelated]}
+    on_refuted: {}
+    effort_minutes: null
+  source_of_funds_documented:
+    label: "Source of funds documented"
+    on_confirmed: {remove_signal: [rapid_pass_through, new_account_large_inflow]}
+    on_refuted: {}
+    effort_minutes: null
+  sanctions_match_cleared:
+    label: "Potential watchlist match cleared"
+    on_confirmed: {remove_signal: [sanctions_potential_match]}
+    on_refuted: {}
+    effort_minutes: null

@@ -58,15 +58,15 @@ and answers four questions:
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 | Scaffold, dataset profiling, mapping, validation, capability registry | **Built; waiting on the dataset** (Checkpoint 0) |
-| 1 | Canonical tables, graph, entity resolution, detectors | Not started |
-| 2 | Case engine: hypotheses, alternatives, scoring, counterfactuals (Checkpoint A) | Not started |
-| 3 | One-command pipeline + FastAPI | Not started (only `/api/health` and `/api/capabilities` exist) |
-| 4 | React analyst console (Checkpoint B) | Not started (shell shows the guardrail banner only) |
+| 0 | Scaffold, dataset profiling, mapping, validation, capability registry | Built; waiting on the dataset (Checkpoint 0) |
+| 1 | Graph, entity resolution, 13 detectors, IsolationForest signal | Built and unit-tested; not yet run on the real dataset |
+| 2 | Case engine: hypotheses, alternatives, scoring, counterfactuals | Built and tested end to end; Checkpoint A needs the dataset |
+| 3 | One-command pipeline + FastAPI (19 endpoints, audit chain, dossier PDF) | Built |
+| 4 | React analyst console (Checkpoint B) | Not started (built only against real data) |
 | 5 | LangGraph agents, cited narrative, verifier, pseudonymisation | Not started |
-| 6 | What-if simulation and next-best action | Not started |
+| 6 | What-if simulation and next-best action | Backend built; UI not started |
 | 7 | Real-time replay of the dataset | Not started |
-| 8 | Evaluation and success-measure scoreboard | Not started |
+| 8 | Evaluation and success-measure scoreboard | Partial (`/api/metrics`) |
 | 9 | Optional ML / RAG tiers | Not started |
 | 10 | Final polish and fresh-clone test | Not started |
 
@@ -323,15 +323,25 @@ make frontend                   # http://127.0.0.1:5173
 | `make types` | Regenerate frontend TS types from the running API |
 | `make up` | Start the optional Docker stack |
 
-API endpoints available now:
+API endpoints (all computed from pipeline output; real empty states before the first run):
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/health` | Status, whether the mapping is configured, LLM provider, graph backend |
-| `GET /api/capabilities` | Every detector/resolver/model with ENABLED/DISABLED and the reason |
-
-The full endpoint list (cases, graph, evidence, review, audit, dossier, what-if, investigate, stream,
-metrics) arrives in Phases 3–8.
+| `GET /api/health` | Status, mapping configured, pipeline run, LLM provider, graph backend |
+| `GET /api/dashboard` | KPIs, tier counts, score histogram, capability panel, warnings |
+| `GET /api/capabilities` | Every detector/resolver/model: ENABLED/DISABLED with reason, run status, finding count |
+| `GET /api/cases?tier&status&q` | Case queue sorted by priority score |
+| `GET /api/cases/{id}` | Full case: evidence, hypotheses, alternatives, score breakdown, counterfactuals, next steps |
+| `GET /api/cases/{id}/graph` | Cytoscape-ready nodes/edges with type, risk, suspicious flag, evidence IDs |
+| `GET /api/cases/{id}/flow` | Flow-of-funds (Sankey) nodes and links |
+| `GET /api/cases/{id}/evidence/{eid}` | Evidence item with raw source rows and the Cypher equivalent |
+| `POST /api/cases/{id}/review` | confirm_for_investigation / reject_false_positive / request_more_info (notes required) |
+| `GET /api/cases/{id}/audit` | Case audit entries; re-verifies the whole hash chain |
+| `GET /api/cases/{id}/dossier.pdf` | Dossier + watermarked DRAFT report template (never submitted) |
+| `GET /api/cases/{id}/facts` · `POST /whatif` · `POST /adjudicate` · `GET /next-best-actions` | What-if simulation (not recorded) and recorded investigator facts |
+| `GET /api/cases/{id}/llm-audit` | Pseudonymised prompts sent to an LLM (Phase 5) |
+| `GET /api/entities/search` · `GET /api/entities/{id}/neighbors?hops=` | Network exploration |
+| `GET /api/metrics` | Success measures from the brief, with "what this does and does not prove" |
 
 ---
 

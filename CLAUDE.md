@@ -40,9 +40,12 @@ Decision support only. A human investigator makes the final decision.
 ## Working conventions
 
 - Layered architecture, dependencies point inward to the domain (see `docs/architecture.md`).
-  `backend/trace/domain` has NO framework imports (no FastAPI, SQLAlchemy, pandas I/O, LLM SDKs).
+  `backend/trace/domain` has NO framework imports (no FastAPI, SQLAlchemy, LLM SDKs, no file/DB I/O).
+  Computation libraries (numpy, pandas, networkx) are allowed for vectorised detectors.
   The domain talks only to repository interfaces in `data_access/ports.py`;
   `infrastructure/container.py` injects implementations.
+- Derived outlier thresholds are strict: a value must EXCEED the configured percentile of its population.
+- Networks are joined only through transactions cited by findings, never by ordinary history.
 - No dataset-specific column names, thresholds or values in code. Everything dataset-specific lives
   in `config/*.yaml`; thresholds are produced by the pipeline from the data's own distributions.
 - Frontend TS API types are GENERATED (`scripts/export_types.sh`), never hand-written; no mock client.

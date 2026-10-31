@@ -1,25 +1,15 @@
-"""FastAPI app. Routers are added in Phase 3."""
+"""FastAPI app. Decision support only: there are no submit, file or freeze endpoints."""
 
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from trace.infrastructure.settings import get_settings
-from trace.ingestion.capabilities import capability_table
-from trace.ingestion.mapping import load_mapping
+from trace.api.routers import cases, system
 
-app = FastAPI(title="TRACE API", description="Decision support only. A human investigator makes the final decision.")
-
-
-@app.get("/api/health")
-def health() -> dict:
-    s = get_settings()
-    cfg = load_mapping(s.path(s.trace_mapping_path))
-    return {"status": "ok", "mapping_configured": not cfg.is_empty, "llm_provider": s.llm_provider,
-            "graph_backend": s.graph_backend}
-
-
-@app.get("/api/capabilities")
-def capabilities() -> list[dict]:
-    s = get_settings()
-    return [c.to_dict() for c in capability_table(load_mapping(s.path(s.trace_mapping_path)))]
+app = FastAPI(title="TRACE API", version="0.1.0",
+              description="Decision support only. A human investigator makes the final decision.")
+app.add_middleware(CORSMiddleware, allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+                   allow_methods=["*"], allow_headers=["*"])
+app.include_router(system.router)
+app.include_router(cases.router)
