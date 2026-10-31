@@ -228,3 +228,91 @@ def test_pipeline_rerun_is_idempotent_and_keeps_review_history(env):
     run(c)
     assert sorted(r["id"] for r in c.cases.all_rows()) == ids_before   # investigator cases survive too
     assert {r["id"]: r["status"] for r in c.cases.all_rows()} == statuses
+
+
+# ------------------------------------------------------------------------------------------ AI explain chat
+class StubLlm:
+    """Test double for the LLM. Lives only in tests/ (rule 1); app code never imports it."""
+
+    configured = True
+    model = "stub-model"
+
+    def __init__(self, mode="ok"):
+        self.mode, self.calls = mode, []
+
+    def chat_json(self, system, user, temperature=0.1, history=None):
+        from trace.intelligence.llm.client import LlmError
+        self.calls.append({"history": list(history or []), "user": json.loads(user)})
+        if self.mode == "down":
+            raise LlmError("LLM request failed: ConnectError")
+        ctx = self.calls[-1]["user"]["context"]
+        first = ctx["evidence"][0]["id"]
+        word = "criminal" if self.mode == "banned" else "unusual"
+        return ({"answer": f"The flows look {word} and need review [{first}].",
+                 "claims": [{"text": "Rapid movement.", "evidence_ids": [first, "E999"], "record_ids": [ctx["case_id"]]},
+                            {"text": "Unsupported claim.", "evidence_ids": [], "record_ids": []}],
+                 "legitimate_explanations": ["Could be a supplier."], "contradictory_evidence": [],
+                 "data_limitations": [], "suggested_next_steps": ["Request KYC documents"]}, "{}")
+
+
+def _user_client(client, username):
+    client.post("/api/admin/users", json={"username": username, "role": "investigator", "password": f"{username}-pass-12"})
+    tok = TestClient(app).post("/api/auth/login", json={"username": username, "password": f"{username}-pass-12"}).json()["token"]
+    return TestClient(app, headers={"Authorization": f"Bearer {tok}"})
+
+
+def test_ai_chat_is_grounded_remembers_turns_and_is_private(env):
+    c, _, client, _ = env
+    stub = StubLlm()
+    c.__dict__["llm"] = stub
+    cid = client.get("/api/cases").json()[0]["id"]
+    assert client.get(f"/api/cases/{cid}/chat").json() == {"messages": [], "llm_configured": True, "model": "stub-model"}
+    r = client.post(f"/api/cases/{cid}/chat", json={"message": "Why is this network suspicious?"})
+    assert r.status_code == 200, r.text
+    a = r.json()["answer"]
+    assert r.json()["role"] == "assistant" and a["model"] == "stub-model"
+    assert a["rejected_citations"] == ["E999"]                    # unknown citation reported, never displayed as cited
+    assert a["claims"][0]["evidence_ids"] != [] and "E999" not in a["claims"][0]["evidence_ids"]
+    assert a["claims"][0]["record_ids"] == [cid]                  # the case id itself is citable
+    assert a["uncited_claims"] == 1 and a["claims"][1]["cited"] is False
+    client.post(f"/api/cases/{cid}/chat", json={"message": "And what could be innocent?"})
+    assert [(x["role"]) for x in client.get(f"/api/cases/{cid}/chat").json()["messages"]] == ["user", "assistant"] * 2
+    assert [h["role"] for h in stub.calls[-1]["history"]] == ["user", "assistant"]   # follow-up carries the first turn
+    assert stub.calls[-1]["user"]["question"] == "And what could be innocent?"
+    ivy = _user_client(client, "chatter")
+    assert ivy.get(f"/api/cases/{cid}/chat").json()["messages"] == []               # history is per user
+    assert client.delete(f"/api/cases/{cid}/chat").json() == {"ok": True}
+    assert client.get(f"/api/cases/{cid}/chat").json()["messages"] == []
+    assert "clear_chat" in [e["action"] for e in client.get(f"/api/cases/{cid}/audit").json()["entries"]]
+    assert client.post(f"/api/cases/{cid}/chat", json={"message": "x"}).status_code == 422   # too short
+
+
+def test_ai_chat_failures_are_real_errors_and_store_nothing(env):
+    c, _, client, _ = env
+    cid = client.get("/api/cases").json()[0]["id"]
+    for mode in ("down", "banned"):
+        c.__dict__["llm"] = StubLlm(mode)
+        r = client.post(f"/api/cases/{cid}/chat", json={"message": "Explain this case"})
+        assert r.status_code == 503 and "AI service is unavailable" in r.json()["detail"]
+        assert client.get(f"/api/cases/{cid}/chat").json()["messages"] == []
+    from trace.intelligence.llm.client import LlmClient
+    c.__dict__["llm"] = LlmClient(None, None, None)
+    r = client.post(f"/api/cases/{cid}/chat", json={"message": "Explain this case"})
+    assert r.status_code == 503 and "not configured" in r.json()["detail"]
+    assert client.get(f"/api/cases/{cid}/chat").json()["llm_configured"] is False
+    c.__dict__.pop("llm", None)
+
+
+def test_ttl_cache_serves_repeats_and_clears_on_write():
+    from trace.data_access.cache import TtlCache
+    cache, n = TtlCache(60), {"loads": 0}
+
+    def load():
+        n["loads"] += 1
+        return n["loads"]
+
+    assert [cache.get("k", load) for _ in range(3)] == [1, 1, 1]
+    cache.clear()
+    assert cache.get("k", load) == 2
+    expired = TtlCache(0)
+    assert [expired.get("k", load), expired.get("k", load)] == [3, 4]

@@ -224,3 +224,33 @@ export function useCreateCase() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["cases"] }),
   });
 }
+
+// ---------------------------------------------------------------------------------- AI explain chat
+export const useChat = (caseId: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ["case", caseId, "chat"],
+    enabled,
+    staleTime: 0,
+    queryFn: async () => unwrap(await api.GET("/api/cases/{case_id}/chat", { params: { path: { case_id: caseId } } })),
+  });
+
+export function useSendChat(caseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (message: string) =>
+      unwrap(await api.POST("/api/cases/{case_id}/chat", { params: { path: { case_id: caseId } }, body: { message } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["case", caseId, "chat"] }),
+  });
+}
+
+export function useClearChat(caseId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      unwrap(await api.DELETE("/api/cases/{case_id}/chat", { params: { path: { case_id: caseId } } })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["case", caseId, "chat"] });
+      void qc.invalidateQueries({ queryKey: ["case", caseId, "audit"] });
+    },
+  });
+}

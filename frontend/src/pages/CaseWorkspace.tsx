@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ArrowLeft, FileDown } from "lucide-react";
@@ -11,13 +11,16 @@ import { EvidenceTable } from "@/components/evidence/EvidenceTable";
 import { HypothesesPanel } from "@/components/hypotheses/HypothesesPanel";
 import { ScorePanel } from "@/components/score/ScorePanel";
 import { NarrativePanel } from "@/components/narrative/NarrativePanel";
-import { CopilotPanel } from "@/components/agent/CopilotPanel";
+import { ChatDrawer } from "@/components/chat/ChatDrawer";
+import { ExplainButton } from "@/components/chat/ExplainButton";
+import { useMediaQuery } from "@/lib/useMediaQuery";
+import { useUi } from "@/store/ui";
 import { WhatIfPanel } from "@/components/whatif/WhatIfPanel";
 import { AuditPanel, ReviewPanel } from "@/components/review/ReviewPanel";
 import { byCurrency, humanize, num } from "@/lib/format";
 import { download, type CaseOut } from "@/api/client";
 
-const TABS = ["Overview", "Copilot", "Hypotheses", "Evidence", "Score", "Flow", "Narrative", "Next steps", "What-if", "Audit"] as const;
+const TABS = ["Overview", "Hypotheses", "Evidence", "Score", "Flow", "Narrative", "Next steps", "What-if", "Audit"] as const;
 type TabId = (typeof TABS)[number];
 
 function Overview({ c }: { c: CaseOut }) {
@@ -26,6 +29,10 @@ function Overview({ c }: { c: CaseOut }) {
   return (
     <div className="space-y-4">
       <Card title="Summary"><p className="text-sm leading-relaxed">{c.summary}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-violet-500/20 bg-gradient-to-r from-violet-500/5 to-sky-500/5 p-3">
+          <ExplainButton caseId={c.id} prominent />
+          <p className="min-w-0 flex-1 text-xs text-muted">Not sure why this network was flagged? Get a plain-language explanation based only on this case's evidence, then ask follow-up questions.</p>
+        </div>
         {!c.meets_case_rule && <p className="mt-2 text-xs text-amber-300">Opened by an investigator; it does not meet the automatic two-signal case rule.</p>}
       </Card>
       {c.tier === "LOW" && (
@@ -85,6 +92,9 @@ export function CaseWorkspacePage() {
   const graph = useCaseGraph(caseId);
   const flow = useCaseFlow(caseId);
   const [tab, setTab] = useState<TabId>("Overview");
+  const wide = useMediaQuery("(min-width: 1024px)");
+  const closeChat = useUi((s) => s.closeChat);
+  useEffect(() => () => closeChat(), [closeChat, caseId]);   // never leave a chat open on another case
 
   if (q.isLoading) return <div className="p-6"><SkeletonRows rows={12} /></div>;
   if (q.isError) return <div className="p-6"><ErrorState error={q.error} /></div>;
@@ -92,8 +102,9 @@ export function CaseWorkspacePage() {
   const members = c.entities.filter((e) => e.role === "member").length;
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-2.5">
+    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-w-0 flex-1 flex-col">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-panel px-4 py-2.5">
         <Link to="/cases" className="rounded p-1 text-muted hover:text-slate-200" aria-label="Back to case queue"><ArrowLeft className="h-4 w-4" /></Link>
         <h1 className="font-mono text-sm">{c.id}</h1>
         <TierBadge tier={c.tier} />
@@ -104,18 +115,20 @@ export function CaseWorkspacePage() {
         {c.adjudicated && <Badge tone="blue">after recorded facts: {c.adjudicated.score} ({c.adjudicated.tier})</Badge>}
         {c.origin === "investigator" && <Badge tone="violet">investigator-created by {c.created_by}</Badge>}
         {c.resolution && <Badge tone="green">outcome: {humanize(c.resolution)}</Badge>}
+        <span className="ml-auto" />
+        <ExplainButton caseId={c.id} />
         <button type="button" onClick={() => void download(`/api/cases/${c.id}/dossier.pdf`, `TRACE-${c.id}-dossier.pdf`)}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-slate-700/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">
+          className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-slate-700/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">
           <FileDown className="h-4 w-4" aria-hidden="true" /> Dossier PDF
         </button>
       </div>
-      <PanelGroup direction="horizontal" className="min-h-0 flex-1">
+      <PanelGroup direction={wide ? "horizontal" : "vertical"} className="min-h-0 flex-1">
         <Panel defaultSize={45} minSize={25}>
           {graph.isLoading && <Skeleton className="m-4 h-[calc(100%-2rem)]" />}
           {graph.isError && <div className="p-4"><ErrorState error={graph.error} /></div>}
           {graph.data && (graph.data.nodes.length ? <CaseGraph caseId={c.id} data={graph.data} /> : <EmptyState title="No graph data for this case" />)}
         </Panel>
-        <PanelResizeHandle className="w-1 bg-line hover:bg-sky-600" aria-label="Resize panels" />
+        <PanelResizeHandle className={`${wide ? "w-1" : "h-1"} bg-line transition-colors hover:bg-sky-500`} aria-label="Resize panels" />
         <Panel defaultSize={55} minSize={30}>
           <div className="flex h-full flex-col">
             <div role="tablist" aria-label="Case sections" className="flex gap-0.5 overflow-x-auto border-b border-line px-2">
@@ -126,7 +139,6 @@ export function CaseWorkspacePage() {
             </div>
             <div role="tabpanel" className="min-h-0 flex-1 overflow-auto p-4">
               {tab === "Overview" && <Overview c={c} />}
-              {tab === "Copilot" && <CopilotPanel c={c} />}
               {tab === "Hypotheses" && <HypothesesPanel c={c} />}
               {tab === "Evidence" && <EvidenceTable c={c} />}
               {tab === "Score" && <ScorePanel c={c} />}
@@ -139,6 +151,8 @@ export function CaseWorkspacePage() {
           </div>
         </Panel>
       </PanelGroup>
+    </div>
+    <ChatDrawer c={c} docked={wide} />
     </div>
   );
 }

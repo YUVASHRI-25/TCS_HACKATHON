@@ -8,12 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from trace.api.deps import current_user
-from trace.api.schemas.models import (AdjudicateIn, AuditOut, CaseFlow, CaseGraph, CaseOut, CaseSummary, CreateCaseIn,
+from trace.api.schemas.models import (AdjudicateIn, AuditOut, CaseFlow, CaseGraph, CaseOut, CaseSummary, ChatHistory,
+                                      ChatIn, ChatMessageOut, CreateCaseIn,
                                       EvidenceDetail, FactOut, NextBestAction, ReviewIn, ReviewOut, WhatIfIn, WhatIfOut)
-from pydantic import BaseModel, Field
-
-from trace.application import copilot, manual_case
-from trace.application import queries
+from trace.application import chat, copilot, manual_case, queries
 from trace.application.dossier import build_dossier
 from trace.application.review import ReviewError, adjudicate, nba, review, whatif
 from trace.domain.scoring.score import ScoringConfig
@@ -148,18 +146,27 @@ def get_llm_audit(case_id: str, c: Container = Depends(get_container)) -> list[d
     return c.llm_audit.for_case(case_id)
 
 
-class CopilotIn(BaseModel):
-    question: str = Field(min_length=3, max_length=1000)
+@router.get("/{case_id}/chat", response_model=ChatHistory)
+def get_chat(case_id: str, user: dict = Depends(current_user), c: Container = Depends(get_container)):
+    _case(case_id, c)
+    return {"messages": chat.history(c, case_id, user["username"]), "llm_configured": c.llm.configured,
+            "model": c.llm.model}
 
 
-@router.post("/{case_id}/copilot")
-def ask_copilot(case_id: str, body: CopilotIn, user: dict = Depends(current_user),
-                c: Container = Depends(get_container)) -> dict[str, Any]:
-    """LLM answer grounded in this case's evidence. 503 with the real reason when the LLM is unavailable."""
+@router.post("/{case_id}/chat", response_model=ChatMessageOut)
+def post_chat(case_id: str, body: ChatIn, user: dict = Depends(current_user), c: Container = Depends(get_container)):
+    """AI explanation grounded in this case's evidence. 503 with the real reason when the LLM is unavailable."""
     case = _case(case_id, c)
     try:
-        return copilot.ask(c, case, body.question, c.llm, user["username"])
+        return chat.ask(c, case, body.message, user["username"])
     except LlmError as e:
-        raise HTTPException(503, f"LLM unavailable: {e}") from e
+        raise HTTPException(503, f"The AI service is unavailable: {e}") from e
     except copilot.CopilotError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.delete("/{case_id}/chat")
+def delete_chat(case_id: str, user: dict = Depends(current_user), c: Container = Depends(get_container)) -> dict:
+    _case(case_id, c)
+    chat.clear(c, case_id, user["username"])
+    return {"ok": True}

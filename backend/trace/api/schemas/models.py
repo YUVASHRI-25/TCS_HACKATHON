@@ -354,3 +354,42 @@ class Metrics(BaseModel):
     measures: list[dict[str, Any]]
     label_report: dict[str, Any] | None
     does_not_prove: list[str]
+
+
+class ChatClaim(BaseModel):
+    text: str
+    evidence_ids: list[str]
+    record_ids: list[str]
+    cited: bool
+
+
+class ChatAnswer(BaseModel):
+    """A grounded LLM answer. Every cited id was checked against this case; unknown ids are listed, not shown."""
+    answer: str
+    claims: list[ChatClaim]
+    legitimate_explanations: list[str]
+    contradictory_evidence: list[str]
+    data_limitations: list[str]
+    suggested_next_steps: list[str]
+    rejected_citations: list[str]
+    uncited_claims: int
+    model: str | None = None
+    disclaimer: str
+
+
+class ChatMessageOut(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    created_at: str
+    text: str | None = None          # the investigator's question (role=user)
+    answer: ChatAnswer | None = None  # the AI answer (role=assistant)
+
+
+class ChatHistory(BaseModel):
+    messages: list[ChatMessageOut]
+    llm_configured: bool
+    model: str | None = None
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=2, max_length=1000)

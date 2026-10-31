@@ -8,7 +8,8 @@ from functools import cached_property
 import pandas as pd
 
 from trace.data_access.audit.chain import SqlAuditStore
-from trace.data_access.relational.store import SqlCaseRepository, SqlDatasets, SqlLlmAudit, SqlUsers, make_engine
+from trace.data_access.relational.store import (SqlCaseRepository, SqlChat, SqlDatasets, SqlLlmAudit, SqlUsers,
+                                                    make_engine)
 from trace.infrastructure.config import TraceConfig, load_config
 from trace.infrastructure.settings import Settings, get_settings
 
@@ -43,10 +44,14 @@ class Container:
         return SqlLlmAudit(self.engine)
 
     @cached_property
+    def chat(self) -> SqlChat:
+        return SqlChat(self.engine)
+
+    @cached_property
     def llm(self):
         from trace.intelligence.llm.client import LlmClient
         r = self.settings.llm_resolved
-        return LlmClient(r["api_key"], r["base_url"], r["model"])
+        return LlmClient(r["api_key"], r["base_url"], r["model"], reasoning_effort=r.get("reasoning_effort"))
 
     @property
     def config(self) -> TraceConfig:

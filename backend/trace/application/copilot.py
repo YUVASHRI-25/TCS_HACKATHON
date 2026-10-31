@@ -16,10 +16,13 @@ from trace.infrastructure.container import Container
 from trace.intelligence.llm.client import LlmClient, LlmError
 
 BANNED = ("guilty", "criminal", "fraudster", "confirmed fraud", "launderer")
-MAX_EVIDENCE_TXNS = 8
-MAX_LINKS = 150
+MAX_EVIDENCE_TXNS = 5
+MAX_LINKS = 60
+MAX_HISTORY_TURNS = 4
 
 SYSTEM = """You are the investigation copilot of TRACE, a financial-crime network decision-support tool.
+Write for a busy investigator: plain language, short sentences, no jargon, no filler. `answer` is at most 90 words
+and states the main reason first. Put detail in `claims` (at most 6, each one sentence), not in `answer`.
 Rules:
 - Use ONLY the JSON context provided. Never invent transactions, amounts, entities, dates or evidence.
 - Every claim must cite IDs that appear in the context (evidence ids like E01, transaction ids, link ids, entity ids).
@@ -54,7 +57,7 @@ class CopilotError(RuntimeError):
 
 def build_context(c: Container, case: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
     """Structured context + the set of IDs the model is allowed to cite."""
-    allowed: set[str] = set()
+    allowed: set[str] = {case["id"]}
     ev = []
     for e in case["evidence"]:
         allowed.add(e["id"])
@@ -100,7 +103,9 @@ def build_context(c: Container, case: dict[str, Any]) -> tuple[dict[str, Any], s
     return ctx, allowed
 
 
-def ask(c: Container, case: dict[str, Any], question: str, llm: LlmClient, user: str) -> dict[str, Any]:
+def ask(c: Container, case: dict[str, Any], question: str, llm: LlmClient, user: str,
+        history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    """`history`: earlier turns as {role: user|assistant, content: text}; the case context is sent every turn."""
     q = question.strip()
     if not q:
         raise CopilotError("question is empty")
@@ -108,7 +113,7 @@ def ask(c: Container, case: dict[str, Any], question: str, llm: LlmClient, user:
     prompt = json.dumps({"question": q, "context": ctx}, default=str)
     provider = llm.model or "unconfigured"
     try:
-        obj, raw = llm.chat_json(SYSTEM, prompt)
+        obj, raw = llm.chat_json(SYSTEM, prompt, history=(history or [])[-2 * MAX_HISTORY_TURNS:])
     except LlmError as e:
         c.llm_audit.record(case["id"], "copilot", provider, q, None, f"error: {e}")
         raise

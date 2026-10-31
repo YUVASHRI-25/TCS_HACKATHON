@@ -65,10 +65,13 @@ export function CaseGraph({ caseId, data }: Props) {
       ],
       layout: { name: "fcose", animate: false, randomize: true, nodeRepulsion: 8000, idealEdgeLength: 70 } as never,
     });
+    // Cytoscape only listens to window resizes; follow the panel (chat docking, panel drag) as well.
+    const ro = new ResizeObserver(() => { inst.resize(); });
+    ro.observe(box.current);
     inst.on("tap", "node", (evt) => setSelected(evt.target.data() as GraphNode));
     inst.on("tap", (evt) => evt.target === inst && setSelected(null));
     cy.current = inst;
-    return () => inst.destroy();
+    return () => { ro.disconnect(); inst.destroy(); };
   }, [data]);
 
   // Type filters + time slider.

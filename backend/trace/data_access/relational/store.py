@@ -10,6 +10,7 @@ from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, Integer, MetaDat
                         delete, insert, inspect, select, text, update)
 from sqlalchemy.engine import Engine
 
+from trace.data_access.cache import TtlCache
 from trace.data_access.ports import CaseRepository
 
 metadata = MetaData()
@@ -59,6 +60,14 @@ datasets = Table("datasets", metadata,
                  Column("files", JSON, nullable=False),
                  Column("message", Text))
 
+chat_messages = Table("chat_messages", metadata,
+                      Column("id", Integer, primary_key=True, autoincrement=True),
+                      Column("case_id", String(32), nullable=False, index=True),
+                      Column("username", String(80), nullable=False, index=True),
+                      Column("role", String(12), nullable=False),            # user | assistant
+                      Column("content", JSON, nullable=False),
+                      Column("created_at", String(40), nullable=False))
+
 dataset_runs = Table("dataset_runs", metadata,
                      Column("id", Integer, primary_key=True, autoincrement=True),
                      Column("dataset_id", Integer, nullable=False, index=True),
@@ -94,7 +103,11 @@ def make_engine(url: str) -> Engine:
     if url.startswith("sqlite:///"):
         from pathlib import Path
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
-    eng = create_engine(url, future=True)
+    opts: dict[str, Any] = {}
+    if not url.startswith("sqlite"):
+        # Hosted Postgres poolers close idle connections: test before reuse and recycle often.
+        opts = {"pool_pre_ping": True, "pool_recycle": 240, "pool_size": 5, "max_overflow": 5}
+    eng = create_engine(url, future=True, **opts)
     metadata.create_all(eng)
     _migrate(eng)
     return eng
@@ -117,9 +130,11 @@ def now_iso() -> str:
 class SqlCaseRepository(CaseRepository):
     def __init__(self, engine: Engine):
         self.engine = engine
+        self._cache = TtlCache(60)
 
     def replace_all(self, run_summary: dict[str, Any], case_dicts: list[dict[str, Any]]) -> int:
         """Idempotent pipeline write: one new run row; the case table is rewritten. Audit is untouched."""
+        self._cache.clear()
         with self.engine.begin() as c:
             run_id = c.execute(insert(runs).values(created_at=datetime.now(timezone.utc),
                                                    summary=json.loads(json.dumps(run_summary, default=str)))).inserted_primary_key[0]
@@ -139,22 +154,31 @@ class SqlCaseRepository(CaseRepository):
 
     def add(self, case: dict[str, Any], run_id: int, origin: str, created_by: str) -> None:
         row = self._row(run_id, case) | {"origin": origin, "created_by": created_by}
+        self._cache.clear()
         with self.engine.begin() as c:
             c.execute(delete(cases).where(cases.c.id == case["id"]))
             c.execute(insert(cases).values(**row))
 
     def save(self, case: dict[str, Any]) -> None:
+        self._cache.clear()
         with self.engine.begin() as c:
             c.execute(cases.update().where(cases.c.id == case["id"]).values(
                 status=case["status"], data=json.loads(json.dumps(case, default=str))))
 
     def get(self, case_id: str) -> dict[str, Any] | None:
-        with self.engine.connect() as c:
-            r = c.execute(select(cases.c.data).where(cases.c.id == case_id)).first()
-        return r[0] if r else None
+        def load() -> dict[str, Any] | None:
+            with self.engine.connect() as c:
+                r = c.execute(select(cases.c.data).where(cases.c.id == case_id)).first()
+            return r[0] if r else None
+        return self._cache.get(("case", case_id), load)
 
     def list(self, tier: str | None = None, status: str | None = None, q: str | None = None,
              limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
+        return self._cache.get(("list", tier, status, q, limit, offset),
+                               lambda: self._list(tier, status, q, limit, offset))
+
+    def _list(self, tier: str | None, status: str | None, q: str | None, limit: int, offset: int
+              ) -> list[dict[str, Any]]:
         stmt = select(cases.c.id, cases.c.tier, cases.c.priority_score, cases.c.status, cases.c.summary,
                       cases.c.n_members, cases.c.exposure_total, cases.c.finding_types, cases.c.origin,
                       cases.c.created_by)
@@ -172,9 +196,11 @@ class SqlCaseRepository(CaseRepository):
         return self.list(limit=10**9)
 
     def latest_run(self) -> dict[str, Any] | None:
-        with self.engine.connect() as c:
-            r = c.execute(select(runs).order_by(runs.c.id.desc()).limit(1)).first()
-        return {"id": r.id, "created_at": str(r.created_at), **r.summary} if r else None
+        def load() -> dict[str, Any] | None:
+            with self.engine.connect() as c:
+                r = c.execute(select(runs).order_by(runs.c.id.desc()).limit(1)).first()
+            return {"id": r.id, "created_at": str(r.created_at), **r.summary} if r else None
+        return self._cache.get(("run",), load)
 
 
 class SqlLlmAudit:
@@ -199,6 +225,7 @@ class SqlLlmAudit:
 class SqlUsers:
     def __init__(self, engine: Engine):
         self.engine = engine
+        self._sessions = TtlCache(30)   # token -> user; cleared on any user/session write
 
     def count(self) -> int:
         with self.engine.connect() as c:
@@ -226,6 +253,7 @@ class SqlUsers:
             return [dict(r._mapping) for r in c.execute(select(users).order_by(users.c.id))]
 
     def update(self, uid: int, **values: Any) -> dict[str, Any] | None:
+        self._sessions.clear()
         with self.engine.begin() as c:
             c.execute(update(users).where(users.c.id == uid).values(**values))
         return self.get(uid)
@@ -236,18 +264,22 @@ class SqlUsers:
                                               expires_at=expires_at))
 
     def session_user(self, token_hash: str) -> dict[str, Any] | None:
-        with self.engine.connect() as c:
-            r = c.execute(select(sessions).where(sessions.c.token_hash == token_hash)).first()
-        if r is None or r.expires_at < now_iso():
-            return None
-        u = self.get(r.user_id)
-        return u if u and u["active"] else None
+        def load() -> dict[str, Any] | None:
+            with self.engine.connect() as c:
+                r = c.execute(select(sessions).where(sessions.c.token_hash == token_hash)).first()
+            if r is None or r.expires_at < now_iso():
+                return None
+            u = self.get(r.user_id)
+            return u if u and u["active"] else None
+        return self._sessions.get(token_hash, load)
 
     def drop_session(self, token_hash: str) -> None:
+        self._sessions.clear()
         with self.engine.begin() as c:
             c.execute(delete(sessions).where(sessions.c.token_hash == token_hash))
 
     def drop_user_sessions(self, uid: int) -> None:
+        self._sessions.clear()
         with self.engine.begin() as c:
             c.execute(delete(sessions).where(sessions.c.user_id == uid))
 
@@ -303,3 +335,30 @@ class SqlDatasets:
         with self.engine.begin() as c:
             c.execute(update(dataset_runs).where(dataset_runs.c.status == "running").values(
                 status="failed", finished_at=now_iso(), error="interrupted (server restarted during the run)"))
+
+
+class SqlChat:
+    """Per-user, per-case conversation history for the AI explain chat."""
+
+    def __init__(self, engine: Engine):
+        self.engine = engine
+
+    def add(self, case_id: str, username: str, role: str, content: dict[str, Any]) -> dict[str, Any]:
+        import json
+        row = {"case_id": case_id, "username": username, "role": role,
+               "content": json.loads(json.dumps(content, default=str)), "created_at": now_iso()}
+        with self.engine.begin() as c:
+            mid = c.execute(insert(chat_messages).values(**row)).inserted_primary_key[0]
+        return {"id": mid, **row}
+
+    def history(self, case_id: str, username: str, limit: int = 100) -> list[dict[str, Any]]:
+        with self.engine.connect() as c:
+            rows = c.execute(select(chat_messages).where(chat_messages.c.case_id == case_id,
+                                                         chat_messages.c.username == username)
+                             .order_by(chat_messages.c.id.desc()).limit(limit)).all()
+        return [dict(r._mapping) for r in reversed(rows)]
+
+    def clear(self, case_id: str, username: str) -> None:
+        with self.engine.begin() as c:
+            c.execute(delete(chat_messages).where(chat_messages.c.case_id == case_id,
+                                                  chat_messages.c.username == username))

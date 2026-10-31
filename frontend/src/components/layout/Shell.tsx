@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Activity, BarChart3, Database, FolderSearch, LayoutDashboard, ListChecks, LogOut, Network, Radio, Search, Settings2, ShieldAlert, Users } from "lucide-react";
 import { api } from "@/api/client";
 import { useAuth } from "@/store/auth";
@@ -36,14 +36,15 @@ export function GuardrailBanner() {
 export function Shell({ children }: { children: ReactNode }) {
   const setPalette = useUi((s) => s.setPalette);
   const navigate = useNavigate();
+  const location = useLocation();
   const [q, setQ] = useState("");
   const health = useHealth();
   const user = useAuth((s) => s.user);
   const signOut = useAuth((s) => s.signOut);
   const navLink = ({ isActive }: { isActive: boolean }) =>
     cn(
-      "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400",
-      isActive ? "bg-sky-500/15 text-sky-200" : "text-slate-300 hover:bg-slate-700/40",
+      "flex items-center justify-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 lg:justify-start",
+      isActive ? "bg-sky-500/15 font-medium text-sky-200" : "text-slate-300 hover:bg-slate-700/40",
     );
 
   useEffect(() => {
@@ -61,10 +62,10 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="flex h-full flex-col">
       <GuardrailBanner />
       <div className="flex min-h-0 flex-1">
-        <nav aria-label="Primary" className="flex w-56 shrink-0 flex-col border-r border-line bg-panel2">
-          <div className="flex items-center gap-2 px-4 py-4">
-            <Activity className="h-5 w-5 text-sky-400" aria-hidden="true" />
-            <div>
+        <nav aria-label="Primary" className="flex w-16 shrink-0 flex-col overflow-y-auto border-r border-line bg-panel2 transition-[width] duration-300 lg:w-56">
+          <div className="flex items-center justify-center gap-2 px-2 py-4 lg:justify-start lg:px-4">
+            <Activity className="h-5 w-5 shrink-0 text-sky-400" aria-hidden="true" />
+            <div className="hidden lg:block">
               <p className="text-sm font-bold tracking-widest text-slate-100">TRACE</p>
               <p className="text-[10px] leading-tight text-muted">Transaction Relationship Analysis &amp; Crime Exploration</p>
             </div>
@@ -72,20 +73,23 @@ export function Shell({ children }: { children: ReactNode }) {
           <ul className="flex-1 space-y-0.5 px-2">
             {NAV.map(({ to, label, icon: Icon }) => (
               <li key={to}>
-                <NavLink to={to} end={to === "/"} className={navLink}>
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                  {label}
+                <NavLink to={to} end={to === "/"} className={navLink} title={label}>
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="hidden lg:inline">{label}</span>
+                  <span className="sr-only lg:hidden">{label}</span>
                 </NavLink>
               </li>
             ))}
             {user?.role === "admin" && (
               <>
-                <li className="px-3 pb-1 pt-4 text-[10px] uppercase tracking-wider text-muted">Administration</li>
+                <li className="hidden px-3 pb-1 pt-4 text-[10px] uppercase tracking-wider text-muted lg:block">Administration</li>
+                <li className="my-2 border-t border-line lg:hidden" aria-hidden="true" />
                 {ADMIN_NAV.map(({ to, label, icon: Icon }) => (
                   <li key={to}>
-                    <NavLink to={to} className={navLink}>
-                      <Icon className="h-4 w-4" aria-hidden="true" />
-                      {label}
+                    <NavLink to={to} className={navLink} title={label}>
+                      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="hidden lg:inline">{label}</span>
+                      <span className="sr-only lg:hidden">{label}</span>
                     </NavLink>
                   </li>
                 ))}
@@ -93,8 +97,8 @@ export function Shell({ children }: { children: ReactNode }) {
             )}
           </ul>
           {user && (
-            <div className="flex items-center justify-between border-t border-line px-4 py-3 text-xs">
-              <div className="min-w-0">
+            <div className="flex items-center justify-center border-t border-line px-2 py-3 text-xs lg:justify-between lg:px-4">
+              <div className="hidden min-w-0 lg:block">
                 <p className="truncate text-slate-200">{user.display_name}</p>
                 <p className="text-muted">{user.role === "admin" ? "Administrator" : "Investigator"}</p>
               </div>
@@ -105,7 +109,7 @@ export function Shell({ children }: { children: ReactNode }) {
               </button>
             </div>
           )}
-          <div className="border-t border-line px-4 py-3 text-[11px] text-muted">
+          <div className="hidden border-t border-line px-4 py-3 text-[11px] text-muted lg:block">
             <p>
               API:{" "}
               {health.isError ? (
@@ -151,7 +155,9 @@ export function Shell({ children }: { children: ReactNode }) {
               Ctrl K
             </button>
           </header>
-          <main className="min-h-0 flex-1 overflow-auto">{children}</main>
+          <main className="app-surface min-h-0 flex-1 overflow-auto">
+            <div key={location.pathname} className="page-enter h-full">{children}</div>
+          </main>
         </div>
       </div>
       <CommandPalette />

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { X } from "lucide-react";
 import { useUi } from "@/store/ui";
 import { useEvidence } from "@/hooks/useApi";
@@ -29,6 +30,12 @@ export function EvidenceDrawer() {
   const ev = useUi((s) => s.evidence);
   const close = useUi((s) => s.closeEvidence);
   const q = useEvidence(ev?.caseId ?? "", ev?.eid ?? null);
+  useEffect(() => {
+    if (!ev) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ev, close]);
   if (!ev) return null;
   const d = q.data;
   return (
@@ -39,7 +46,6 @@ export function EvidenceDrawer() {
         aria-label={`Evidence ${ev.eid}`}
         className="flex h-full w-full max-w-3xl flex-col border-l border-line bg-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.key === "Escape" && close()}
       >
         <header className="flex items-center justify-between border-b border-line px-5 py-3">
           <div className="flex items-center gap-2">

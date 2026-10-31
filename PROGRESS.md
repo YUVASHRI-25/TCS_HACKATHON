@@ -33,6 +33,14 @@
 - Percentiles/params marked `confirm` in `config/detectors.yaml`; weights fan_out 15, burst 10, SHARED_BUSINESS 10 not in spec.
 - Entity resolution: names are unique synthetic strings and phones/emails are unique, so it finds nothing (correct).
 
+## AI explain chat (added after Checkpoint B)
+- "Explain with AI" button (case header + overview) opens a docked chat that answers from the case evidence only
+  (Gemini via its OpenAI-compatible endpoint; LLM_PROVIDER not required, a GEMINI_API_KEY is enough).
+- Grounded: every cited id is validated against the case; unknown ids are dropped and reported; banned wording is refused;
+  the LLM never sets a number. Failures are real errors (503), never a fake answer.
+- Conversation history is stored per user per case (table `chat_messages`); each turn is in `llm_audit` and the audit log.
+- Remote Postgres is ~1-2 s per query from some networks: repository reads are cached in-process (TTL 60 s / 30 s).
+
 ## Known issues
 - Python env is the shared Anaconda 3.13 (FastAPI upgraded to 0.162 there; opentelemetry conflicts reported by pip).
 - Graph minimap not implemented (fit-to-view control instead).

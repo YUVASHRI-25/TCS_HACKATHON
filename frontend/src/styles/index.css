@@ -24,3 +24,37 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* Soft tinted workspace so white cards read as raised surfaces. */
+.app-surface {
+  background: linear-gradient(180deg, #f6f8fc 0%, #f1f4f9 100%);
+}
+
+/* Route change: a short fade + rise keeps navigation feeling continuous. */
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.page-enter {
+  animation: page-in 200ms ease-out both;
+}
+
+/* Skeletons shimmer instead of blinking. */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, #e8edf4 25%, #f4f7fb 50%, #e8edf4 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

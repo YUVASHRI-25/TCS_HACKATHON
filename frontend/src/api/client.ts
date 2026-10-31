@@ -48,6 +48,8 @@ export type WhatIfOut = Schemas["WhatIfOut"];
 export type NextBestAction = Schemas["NextBestAction"];
 export type FactOut = Schemas["FactOut"];
 export type Metrics = Schemas["Metrics"];
+export type ChatMessage = Schemas["ChatMessageOut"];
+export type ChatAnswer = Schemas["ChatAnswer"];
 export type Tier = CaseOut["tier"];
 export type FactState = FactOut["state"];
 

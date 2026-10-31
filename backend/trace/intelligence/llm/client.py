@@ -40,8 +40,10 @@ def _fail(msg: str) -> LlmError:
 
 
 class LlmClient:
-    def __init__(self, api_key: str | None, base_url: str | None, model: str | None, timeout: float = 60.0):
+    def __init__(self, api_key: str | None, base_url: str | None, model: str | None, timeout: float = 90.0,
+                 reasoning_effort: str | None = None):
         self.api_key, self.base_url, self.model, self.timeout = api_key, base_url, model, timeout
+        self.reasoning_effort = reasoning_effort
 
     @property
     def configured(self) -> bool:
@@ -51,13 +53,17 @@ class LlmClient:
         return [n for n, v in (("LLM_API_KEY", self.api_key), ("LLM_BASE_URL", self.base_url),
                                ("LLM_MODEL", self.model)) if not v]
 
-    def chat_json(self, system: str, user: str, temperature: float = 0.1) -> tuple[dict[str, Any], str]:
-        """Return (parsed JSON object, raw text). Raises LlmError on any failure."""
+    def chat_json(self, system: str, user: str, temperature: float = 0.1,
+                  history: list[dict[str, str]] | None = None) -> tuple[dict[str, Any], str]:
+        """Return (parsed JSON object, raw text). `history` = earlier {role, content} turns. Raises LlmError."""
         if not self.configured:
             raise _fail(f"LLM is not configured; missing {', '.join(self.missing())}")
         body = {"model": self.model, "temperature": temperature,
                 "response_format": {"type": "json_object"},
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+                "messages": [{"role": "system", "content": system}, *(history or []),
+                             {"role": "user", "content": user}]}
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         t0 = time.time()
         with _lock:
             STATS.requests += 1

@@ -10,9 +10,9 @@ export function Card({ className, children, title, actions }: {
   actions?: ReactNode;
 }) {
   return (
-    <section className={cn("rounded-lg border border-line bg-panel", className)}>
+    <section className={cn("rounded-xl border border-line bg-panel shadow-sm", className)}>
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+        <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-muted">{title}</h2>
           {actions}
         </header>
@@ -64,7 +64,7 @@ export function Button({ className, variant = "default", ...p }: ButtonHTMLAttri
     <button
       {...p}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400",
         v[variant],
         className,
@@ -74,7 +74,7 @@ export function Button({ className, variant = "default", ...p }: ButtonHTMLAttri
 }
 
 export const Skeleton = ({ className }: { className?: string }) => (
-  <div className={cn("animate-pulse rounded bg-slate-700/40", className)} aria-hidden="true" />
+  <div className={cn("shimmer rounded-lg", className)} aria-hidden="true" />
 );
 
 export function SkeletonRows({ rows = 6 }: { rows?: number }) {
@@ -119,7 +119,7 @@ export function Bar({ value, tone = "sky", label }: { value: number; tone?: "sky
 
 export function Kpi({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
-    <div className="rounded-lg border border-line bg-panel px-4 py-3">
+    <div className="rounded-xl border border-line bg-panel px-4 py-3.5 shadow-sm transition-shadow hover:shadow-md">
       <p className="text-[11px] uppercase tracking-wider text-muted">{label}</p>
       <p className="mt-1 font-mono text-2xl font-semibold text-slate-100">{value}</p>
       {hint && <p className="mt-0.5 text-[11px] text-muted">{hint}</p>}

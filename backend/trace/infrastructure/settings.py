@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # Generic OpenAI-compatible endpoint (OpenRouter, Gemini's OpenAI endpoint, ...). Server-side only.
     llm_api_key: str | None = None
     llm_base_url: str | None = None
+    llm_reasoning_effort: str | None = None   # none | low | medium | high (Gemini 2.5 thinking budget)
     gemini_api_key: str | None = None
     gemini_api_key_1: str | None = None
 
@@ -58,7 +59,9 @@ class Settings(BaseSettings):
             if key:
                 base = base or "https://generativelanguage.googleapis.com/v1beta/openai"
                 model = model or "gemini-2.5-flash"
-        return {"api_key": key, "base_url": (base or "").rstrip("/") or None, "model": model}
+        base = (base or "").rstrip("/") or None
+        effort = self.llm_reasoning_effort or ("low" if base and "generativelanguage.googleapis.com" in base else None)
+        return {"api_key": key, "base_url": base, "model": model, "reasoning_effort": effort}
 
     def path(self, p: Path) -> Path:
         return p if p.is_absolute() else REPO_ROOT / p

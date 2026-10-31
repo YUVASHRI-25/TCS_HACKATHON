@@ -313,6 +313,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/system-health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * System Health
+         * @description Live checks: database round-trip, graph state, LLM connectivity (real provider call) and failure counters.
+         */
+        get: operations["system_health_api_admin_system_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** All Cases */
+        get: operations["all_cases_api_admin_cases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cases": {
         parameters: {
             query?: never;
@@ -530,6 +567,28 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cases/{case_id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chat */
+        get: operations["get_chat_api_cases__case_id__chat_get"];
+        put?: never;
+        /**
+         * Post Chat
+         * @description AI explanation grounded in this case's evidence. 503 with the real reason when the LLM is unavailable.
+         */
+        post: operations["post_chat_api_cases__case_id__chat_post"];
+        /** Delete Chat */
+        delete: operations["delete_chat_api_cases__case_id__chat_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -793,6 +852,72 @@ export interface components {
             origin: "pipeline" | "investigator";
             /** Created By */
             created_by?: string | null;
+        };
+        /**
+         * ChatAnswer
+         * @description A grounded LLM answer. Every cited id was checked against this case; unknown ids are listed, not shown.
+         */
+        ChatAnswer: {
+            /** Answer */
+            answer: string;
+            /** Claims */
+            claims: components["schemas"]["ChatClaim"][];
+            /** Legitimate Explanations */
+            legitimate_explanations: string[];
+            /** Contradictory Evidence */
+            contradictory_evidence: string[];
+            /** Data Limitations */
+            data_limitations: string[];
+            /** Suggested Next Steps */
+            suggested_next_steps: string[];
+            /** Rejected Citations */
+            rejected_citations: string[];
+            /** Uncited Claims */
+            uncited_claims: number;
+            /** Model */
+            model?: string | null;
+            /** Disclaimer */
+            disclaimer: string;
+        };
+        /** ChatClaim */
+        ChatClaim: {
+            /** Text */
+            text: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Record Ids */
+            record_ids: string[];
+            /** Cited */
+            cited: boolean;
+        };
+        /** ChatHistory */
+        ChatHistory: {
+            /** Messages */
+            messages: components["schemas"]["ChatMessageOut"][];
+            /** Llm Configured */
+            llm_configured: boolean;
+            /** Model */
+            model?: string | null;
+        };
+        /** ChatIn */
+        ChatIn: {
+            /** Message */
+            message: string;
+        };
+        /** ChatMessageOut */
+        ChatMessageOut: {
+            /** Id */
+            id: number;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Created At */
+            created_at: string;
+            /** Text */
+            text?: string | null;
+            answer?: components["schemas"]["ChatAnswer"] | null;
         };
         /** CounterfactualOut */
         CounterfactualOut: {
@@ -2077,6 +2202,46 @@ export interface operations {
             };
         };
     };
+    system_health_api_admin_system_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+        };
+    };
+    all_cases_api_admin_cases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>[];
+                };
+            };
+        };
+    };
     list_cases_api_cases_get: {
         parameters: {
             query?: {
@@ -2517,6 +2682,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": Record<string, never>[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_api_cases__case_id__chat_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatHistory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_chat_api_cases__case_id__chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_chat_api_cases__case_id__chat_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
                 };
             };
             /** @description Validation Error */

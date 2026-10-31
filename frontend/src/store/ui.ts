@@ -8,6 +8,9 @@ interface UiState {
   closeEvidence: () => void;
   reviewer: string;
   setReviewer: (name: string) => void;
+  chatCase: string | null;
+  openChat: (caseId: string) => void;
+  closeChat: () => void;
 }
 
 const savedReviewer = (() => {
@@ -24,6 +27,9 @@ export const useUi = create<UiState>((set) => ({
   evidence: null,
   openEvidence: (caseId, eid) => set({ evidence: { caseId, eid } }),
   closeEvidence: () => set({ evidence: null }),
+  chatCase: null,
+  openChat: (chatCase) => set({ chatCase }),
+  closeChat: () => set({ chatCase: null }),
   reviewer: savedReviewer,
   setReviewer: (reviewer) => {
     try {
