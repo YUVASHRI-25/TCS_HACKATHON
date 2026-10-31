@@ -1,0 +1,22 @@
+# Detector thresholds, weights and tiers.  EMPTY until the dataset is profiled.
+#
+# Thresholds are DERIVED from the dataset's own distributions by the pipeline. Each entry records
+# its derivation so it can be audited, e.g.:
+#
+# thresholds:
+#   <detector>:
+#     <param>:
+#       value: <number>
+#       derivation: "<percentile / rule used, computed on which column/population>"
+#
+# weights:        { <signal>: <points> }
+# penalties:      { <alternative>: <weight> }
+# bonus_per_extra_signal_type: <points>
+# ml_cap: <points>
+# min_deterministic_finding_types: <int>
+# tiers:          { high: <min score>, medium: <min score> }
+
+thresholds: {}
+weights: {}
+penalties: {}
+tiers: {}

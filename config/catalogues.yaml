@@ -1,0 +1,11 @@
+# Fixed catalogues the deterministic engine and the LLM agents choose from.  EMPTY until Phase 2.
+#
+# typologies:    { <ID>: { label, description, supporting_signals: [], next_steps: [] } }
+# alternatives:  { <ID>: { label, description, required_fields: [], fit_rule: <rule name> } }
+# next_steps:    { <ID>: { label, description } }            # never punitive
+# whatif_facts:  { <ID>: { label, affects: { signal | alternative }, effort_minutes } }  # effort = assumption
+
+typologies: {}
+alternatives: {}
+next_steps: {}
+whatif_facts: {}

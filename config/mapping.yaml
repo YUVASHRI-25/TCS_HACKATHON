@@ -1,0 +1,29 @@
+# Dataset -> canonical model mapping.  EMPTY until the dataset is profiled (Checkpoint 0).
+#
+# Schema (validated by backend/trace/ingestion/mapping.py):
+#
+# source:
+#   adapter: csv | parquet | sql
+#   timezone: <IANA tz of naive timestamps in the source, e.g. as documented by the dataset>  # required if timestamps are naive
+#   tables:
+#     <table_name>:
+#       path: <file path relative to repo root>      # csv / parquet
+#       query: <SQL>                                 # sql adapter (with source.url)
+#       read_options: {}                             # passed to the adapter (sep, encoding, ...)
+#   url: <SQLAlchemy URL>                            # sql adapter only
+#
+# entities:
+#   <CanonicalEntity>:                               # Customer, Account, Transaction, Merchant, Device, IP,
+#     table: <table_name>                            # Location, Beneficiary, Complaint, Alert, WatchlistEntry
+#     fields:
+#       <canonical_field>:
+#         status: direct | derived | absent
+#         column: <source column>                    # direct
+#         derivation: <rule name>                    # derived (see ingestion/mapping.py DERIVATIONS)
+#         params: {}                                 # derived rule parameters
+#         note: <free text>                          # why derived/absent
+#
+# Every canonical field not listed is treated as absent.
+
+source: {}
+entities: {}
