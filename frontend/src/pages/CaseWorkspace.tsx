@@ -11,12 +11,13 @@ import { EvidenceTable } from "@/components/evidence/EvidenceTable";
 import { HypothesesPanel } from "@/components/hypotheses/HypothesesPanel";
 import { ScorePanel } from "@/components/score/ScorePanel";
 import { NarrativePanel } from "@/components/narrative/NarrativePanel";
+import { CopilotPanel } from "@/components/agent/CopilotPanel";
 import { WhatIfPanel } from "@/components/whatif/WhatIfPanel";
 import { AuditPanel, ReviewPanel } from "@/components/review/ReviewPanel";
 import { byCurrency, humanize, num } from "@/lib/format";
-import type { CaseOut } from "@/api/client";
+import { download, type CaseOut } from "@/api/client";
 
-const TABS = ["Overview", "Hypotheses", "Evidence", "Score", "Flow", "Narrative", "Next steps", "What-if", "Audit"] as const;
+const TABS = ["Overview", "Copilot", "Hypotheses", "Evidence", "Score", "Flow", "Narrative", "Next steps", "What-if", "Audit"] as const;
 type TabId = (typeof TABS)[number];
 
 function Overview({ c }: { c: CaseOut }) {
@@ -24,7 +25,9 @@ function Overview({ c }: { c: CaseOut }) {
   const ex = c.exposure;
   return (
     <div className="space-y-4">
-      <Card title="Summary"><p className="text-sm leading-relaxed">{c.summary}</p></Card>
+      <Card title="Summary"><p className="text-sm leading-relaxed">{c.summary}</p>
+        {!c.meets_case_rule && <p className="mt-2 text-xs text-amber-300">Opened by an investigator; it does not meet the automatic two-signal case rule.</p>}
+      </Card>
       {c.tier === "LOW" && (
         <Card title="Why was this downgraded?">
           <ul className="list-disc space-y-1 pl-5 text-sm">
@@ -99,9 +102,12 @@ export function CaseWorkspacePage() {
         <Badge>{humanize(c.status)}</Badge>
         <span className="text-xs text-muted">{members} accounts · {c.evidence.length} evidence</span>
         {c.adjudicated && <Badge tone="blue">after recorded facts: {c.adjudicated.score} ({c.adjudicated.tier})</Badge>}
-        <a href={`/api/cases/${c.id}/dossier.pdf`} className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-slate-700/50">
+        {c.origin === "investigator" && <Badge tone="violet">investigator-created by {c.created_by}</Badge>}
+        {c.resolution && <Badge tone="green">outcome: {humanize(c.resolution)}</Badge>}
+        <button type="button" onClick={() => void download(`/api/cases/${c.id}/dossier.pdf`, `TRACE-${c.id}-dossier.pdf`)}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm hover:bg-slate-700/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400">
           <FileDown className="h-4 w-4" aria-hidden="true" /> Dossier PDF
-        </a>
+        </button>
       </div>
       <PanelGroup direction="horizontal" className="min-h-0 flex-1">
         <Panel defaultSize={45} minSize={25}>
@@ -120,6 +126,7 @@ export function CaseWorkspacePage() {
             </div>
             <div role="tabpanel" className="min-h-0 flex-1 overflow-auto p-4">
               {tab === "Overview" && <Overview c={c} />}
+              {tab === "Copilot" && <CopilotPanel c={c} />}
               {tab === "Hypotheses" && <HypothesesPanel c={c} />}
               {tab === "Evidence" && <EvidenceTable c={c} />}
               {tab === "Score" && <ScorePanel c={c} />}

@@ -1,12 +1,12 @@
-// Chart colours, validated with the dataviz palette validator on the panel surface (#111830, dark):
+// Chart colours, validated with the dataviz palette validator on the panel surface (#111830, white theme):
 // blue/orange pass lightness band, chroma, CVD (ΔE 26.8) and >= 3:1 contrast.
 export const VIZ = {
-  surface: "#111830",
-  primary: "#3987e5", // signal points, magnitudes, ordinary flow
-  contrast: "#d95926", // penalties, suspicious flow
-  neutral: "#4b5675", // gridlines / non-suspicious context
-  text: "#c3c2b7",
-  muted: "#8b98b8",
+  surface: "#FFFFFF",
+  primary: "#2563EB", // signal points, magnitudes, ordinary flow
+  contrast: "#DC2626", // penalties, suspicious flow
+  neutral: "#94A3B8", // gridlines / non-suspicious context
+  text: "#172554",
+  muted: "#64748B",
 };
 
 // Entity-type node colours for the graph (identity, fixed order; shape carries identity too).

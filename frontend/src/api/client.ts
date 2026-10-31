@@ -2,8 +2,35 @@
 // There is no mock client: every call goes to the running TRACE backend.
 import createClient from "openapi-fetch";
 import type { components, paths } from "./schema";
+import { useAuth } from "@/store/auth";
 
 export const api = createClient<paths>({ baseUrl: "" });
+
+// Attach the session token; a 401 ends the session and returns to sign-in.
+api.use({
+  onRequest({ request }) {
+    const tok = useAuth.getState().token;
+    if (tok) request.headers.set("Authorization", `Bearer ${tok}`);
+    return request;
+  },
+  onResponse({ response, request }) {
+    if (response.status === 401 && !request.url.includes("/api/auth/")) useAuth.getState().signOut();
+    return response;
+  },
+});
+
+/** Authenticated download (e.g. the dossier PDF) without putting the token in a URL. */
+export async function download(url: string, filename: string) {
+  const tok = useAuth.getState().token;
+  const res = await fetch(url, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
+  if (!res.ok) throw new ApiError(res.statusText || "Download failed", res.status);
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 export type Schemas = components["schemas"];
 export type CaseOut = Schemas["CaseOut"];
@@ -43,4 +70,18 @@ export function unwrap<T>(res: { data?: T; error?: unknown; response: Response }
     throw new ApiError(detail, res.response.status);
   }
   return res.data;
+}
+
+/** Authenticated JSON call for endpoints whose payload is not described in the generated OpenAPI types. */
+export async function jsonCall<T = unknown>(method: "GET" | "POST", url: string, body?: unknown): Promise<T> {
+  const tok = useAuth.getState().token;
+  const res = await fetch(url, {
+    method,
+    headers: { ...(tok ? { Authorization: `Bearer ${tok}` } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) useAuth.getState().signOut();
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new ApiError(data && typeof data.detail === "string" ? data.detail : res.statusText || "Request failed", res.status);
+  return data as T;
 }

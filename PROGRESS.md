@@ -42,3 +42,10 @@
 
 ## Next step
 CHECKPOINT B review. Then Phase 5 (agents + cited narrative + verifier + pseudonymisation).
+
+## Final-review pass
+- Real LLM copilot (`POST /api/cases/{id}/copilot`): structured context, Pydantic-validated JSON, citations checked against
+  case IDs, banned-word guardrail, explicit 503 when the LLM is unavailable, every call in `llm_audit` + audit chain.
+- Admin: `/api/admin/system-health` (DB round-trip, graph, live LLM ping, failure counters), `/api/admin/cases`; UI page "System health".
+- White enterprise theme; uploads that are rejected now return 422.
+- Not done: dedicated versioned "revised narrative" store (previous versions live in the hash-chained audit log; original score is never overwritten).

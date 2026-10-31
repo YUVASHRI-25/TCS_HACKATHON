@@ -15,7 +15,10 @@ DRAFT_WATERMARK = "DRAFT - Requires human review. Not submitted. No determinatio
 BANNED_TERMS = ("guilty", "criminal", "fraudster", "confirmed fraud", "launderer")
 _BANNED_RE = re.compile(r"\b(" + "|".join(re.escape(t) for t in BANNED_TERMS) + r")s?\b", re.I)
 
-REVIEW_ACTIONS = ("confirm_for_investigation", "reject_false_positive", "request_more_info")
+# Human workflow. "Escalated" means escalated to a senior investigator inside the institution;
+# nothing is filed, frozen or submitted by TRACE.
+REVIEW_ACTIONS = ("start_review", "escalate", "resolve", "reopen")
+RESOLUTIONS = ("no_further_action", "false_positive", "referred_for_further_investigation")
 
 
 class GuardrailViolation(ValueError):

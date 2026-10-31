@@ -151,6 +151,8 @@ def run(container: Container | None = None) -> dict[str, Any]:
     # ---- detect (thresholds derived inside), resolve, graph
     det = run_detection(frames, cfg.detectors, enabled)
     write_thresholds(det.thresholds, s)
+    (out_dir / "findings.json").write_text(json.dumps([f.to_dict() for f in det.findings], default=str),
+                                           encoding="utf-8")
     tg = TraceGraph(frames)
     tg.add_links(det.links)
 

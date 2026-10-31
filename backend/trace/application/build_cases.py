@@ -142,7 +142,7 @@ def build_case(net: Network, frames: dict[str, pd.DataFrame], tx: TxnIndex, cfg:
     disabled = [{"id": c["id"], "reason": c["reason"]} for c in capabilities if not c["enabled"]]
     return Case(
         id=case_id(net.members), summary=summary, tier=breakdown.tier, priority_score=breakdown.total,
-        status="pending_review" if breakdown.tier == "HIGH" else "open", entities=entities, hypotheses=hyps,
+        status="open", entities=entities, hypotheses=hyps,
         alternatives=alternatives, evidence=evidence, score_breakdown=breakdown, counterfactuals=cfs, next_steps=steps,
         exposure=_exposure(findings, tx), key_questions=key_questions,
         capabilities_used=sorted({f.detector for f in findings + context}), capabilities_disabled=disabled,

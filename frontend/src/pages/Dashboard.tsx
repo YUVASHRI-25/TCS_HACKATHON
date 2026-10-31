@@ -55,7 +55,7 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
         <Kpi label="Networks surfaced" value={num(k.cases)} hint={`${num(k.accounts_in_cases)} accounts`} />
-        <Kpi label="Awaiting human review" value={num(k.pending_review)} hint="HIGH tier queue" />
+        <Kpi label="Awaiting human review" value={num(k.pending_review)} hint={`HIGH, open · ${num(k.under_review)} under review · ${num(k.escalated)} escalated · ${num(k.resolved)} resolved`} />
         <Kpi label="Exposure on flagged txns" value={short(k.exposure_surfaced)} hint="summed across currencies — not FX-converted" />
         <Kpi label="Findings" value={num(k.findings)} hint="all detectors" />
         <Kpi label="Transactions processed" value={num(k.transactions_processed)} />

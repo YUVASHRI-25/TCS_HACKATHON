@@ -269,7 +269,7 @@ def regular_cadence(ctx: DetectorContext) -> DetectorResult:
     t = t[size >= p["min_occurrences"]].sort_values(keys + ["ts"])
     if t.empty:
         return DetectorResult([])
-    same = np.logical_and.reduce([t[k].eq(t[k].shift()) for k in keys])
+    same = np.logical_and.reduce([t[k].eq(t[k].shift()).to_numpy(dtype=bool, na_value=False) for k in keys])
     t = t.assign(gap=np.where(same, t["ts"].diff().dt.total_seconds(), np.nan))
     agg = t.groupby(keys).agg(
         n=("txn_id", "size"), gap_mean=("gap", "mean"), gap_std=("gap", "std"),

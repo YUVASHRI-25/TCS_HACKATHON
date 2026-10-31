@@ -61,7 +61,12 @@ def env(tmp_path_factory):
     c = Container(settings=s)
     result = run(c)
     app.dependency_overrides[get_container] = lambda: c
-    yield c, result, TestClient(app), d
+    anon = TestClient(app)
+    assert anon.get("/api/auth/setup").json()["needs_setup"] is True
+    assert anon.post("/api/auth/setup", json={"username": "admin", "password": "admin-pass-1"}).status_code == 200
+    tok = anon.post("/api/auth/login", json={"username": "admin", "password": "admin-pass-1"}).json()["token"]
+    client = TestClient(app, headers={"Authorization": f"Bearer {tok}"})
+    yield c, result, client, d
     app.dependency_overrides.clear()
 
 
@@ -90,8 +95,7 @@ def test_every_case_obeys_guardrails_and_traceability(env):
         text = json.dumps(case)
         assert banned_terms_in(text) == []
         assert "requires human investigation" in case["guardrail_notice"].lower()
-        if case["tier"] == "HIGH":
-            assert case["status"] == "pending_review"
+        assert case["status"] == "open"
 
 
 def test_api_endpoints_return_real_pipeline_data(env):
@@ -116,15 +120,22 @@ def test_api_endpoints_return_real_pipeline_data(env):
     assert client.get("/api/entities/account:M1/neighbors", params={"hops": 1}).json()["nodes"]
 
 
-def test_review_requires_notes_and_writes_verified_audit_chain(env):
+def test_status_workflow_requires_notes_and_writes_verified_audit_chain(env):
     c, _, client, _ = env
     cid = client.get("/api/cases").json()[0]["id"]
-    assert client.post(f"/api/cases/{cid}/review", json={"action": "request_more_info", "reviewer": "r", "notes": ""}).status_code == 422
-    assert client.post(f"/api/cases/{cid}/review", json={"action": "freeze_account", "reviewer": "r", "notes": "x"}).status_code == 422
-    r = client.post(f"/api/cases/{cid}/review", json={"action": "request_more_info", "reviewer": "analyst-1", "notes": "need KYC"})
-    assert r.status_code == 200 and r.json()["case"]["status"] == "more_info_requested"
+    rv = lambda body: client.post(f"/api/cases/{cid}/review", json=body)  # noqa: E731
+    assert rv({"action": "start_review", "notes": ""}).status_code == 422
+    assert rv({"action": "freeze_account", "notes": "x"}).status_code == 422
+    assert rv({"action": "reopen", "notes": "x"}).status_code == 422          # already open
+    r = rv({"action": "start_review", "notes": "taking this one"})
+    assert r.status_code == 200 and r.json()["case"]["status"] == "under_review"
+    assert r.json()["audit_entry"]["actor"] == "admin"                        # reviewer = signed-in user
+    assert rv({"action": "escalate", "notes": "needs senior review"}).json()["case"]["status"] == "escalated"
+    assert rv({"action": "resolve", "notes": "done"}).status_code == 422      # outcome required
+    r = rv({"action": "resolve", "notes": "documents explain flows", "resolution": "no_further_action"})
+    assert r.json()["case"]["status"] == "resolved"
     audit = client.get(f"/api/cases/{cid}/audit").json()
-    assert audit["chain_valid"] and audit["entries"][-1]["action"] == "request_more_info"
+    assert audit["chain_valid"] and [e["action"] for e in audit["entries"]][-3:] == ["start_review", "escalate", "resolve"]
     # tampering with a stored entry breaks verification
     from sqlalchemy import update
     from trace.data_access.relational.store import audit_log
@@ -145,10 +156,75 @@ def test_whatif_is_not_recorded_and_dossier_builds(env):
     assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
 
 
+def test_requests_without_sign_in_are_refused(env):
+    anon = TestClient(app)
+    assert anon.get("/api/health").status_code == 200
+    for u in ("/api/cases", "/api/dashboard", "/api/metrics", "/api/datasets", "/api/admin/users"):
+        assert anon.get(u).status_code == 401
+    assert anon.post("/api/auth/login", json={"username": "admin", "password": "wrong-pass"}).status_code == 401
+    assert anon.post("/api/auth/setup", json={"username": "x", "password": "another-pass"}).status_code == 422
+
+
+def test_admin_manages_users_and_roles_are_enforced(env):
+    _, _, client, _ = env
+    r = client.post("/api/admin/users", json={"username": "ivy", "role": "investigator", "password": "ivy-pass-12"})
+    assert r.status_code == 200
+    assert client.post("/api/admin/users", json={"username": "ivy", "role": "investigator", "password": "ivy-pass-12"}).status_code == 422
+    tok = TestClient(app).post("/api/auth/login", json={"username": "ivy", "password": "ivy-pass-12"}).json()["token"]
+    ivy = TestClient(app, headers={"Authorization": f"Bearer {tok}"})
+    assert ivy.get("/api/cases").status_code == 200
+    assert ivy.get("/api/admin/users").status_code == 403
+    assert ivy.put("/api/admin/settings", json={}).status_code == 403
+    uid = r.json()["id"]
+    assert client.patch(f"/api/admin/users/{uid}", json={"active": False}).json()["active"] is False
+    assert ivy.get("/api/cases").status_code == 401              # sessions dropped on deactivation
+    acts = [e["action"] for e in client.get("/api/admin/activity").json()["entries"]]
+    assert {"create_user", "update_user", "login"} <= set(acts)
+
+
+def test_admin_settings_change_percentiles_not_values(env):
+    c, _, client, d = env
+    view = client.get("/api/admin/settings").json()
+    assert view["detectors"]["fan_in"]["derive"]["min_counterparties"]["percentile"] == 99
+    assert client.put("/api/admin/settings", json={"detectors": {"fan_in": {"derive": {"min_counterparties": {"percentile": 150}}}}}).status_code == 422
+    assert client.put("/api/admin/settings", json={"weights": {"not_a_signal": 3}}).status_code == 422
+    assert client.put("/api/admin/settings", json={"weights": {"fan_in": "x"}}).status_code == 422
+    assert client.put("/api/admin/settings", json={"tiers": {"high": 30}}).status_code == 422   # below medium
+    r = client.put("/api/admin/settings", json={"detectors": {"fan_in": {"derive": {"min_counterparties": {"percentile": 95}}}},
+                                               "weights": {"fan_in": 12}}).json()
+    assert len(r["changes"]) == 2
+    assert client.get("/api/admin/settings").json()["weights"]["fan_in"] == 12
+    assert (d / "config" / "detectors.overrides.yaml").exists()
+    client.put("/api/admin/settings", json={"detectors": {"fan_in": {"derive": {"min_counterparties": {"percentile": 99}}}},
+                                           "weights": {"fan_in": 15}})
+
+
+def test_upload_accepts_known_format_and_rejects_unknown(env):
+    c, _, client, d = env
+    good = (d / "tx.csv").read_bytes()
+    r = client.post("/api/datasets/upload", data={"name": "re-upload"}, files=[("files", ("tx.csv", good, "text/csv"))])
+    assert r.status_code == 200 and r.json()["status"] == "ready"
+    bad = b"foo,bar\n1,2\n"
+    r = client.post("/api/datasets/upload", data={"name": "bad"}, files=[("files", ("other.csv", bad, "text/csv"))])
+    assert r.status_code == 422 and "does not match" in r.json()["detail"]
+
+
+def test_investigator_creates_case_from_chosen_accounts(env):
+    c, _, client, _ = env
+    r = client.post("/api/cases", json={"accounts": ["M1", "M2"], "title": "follow-up", "notes": "linked to alert"})
+    assert r.status_code == 200, r.text
+    case = r.json()
+    assert case["id"].startswith("M-") and case["origin"] == "investigator" and case["created_by"] == "admin"
+    assert {e["raw_id"] for e in case["entities"] if e["role"] == "member"} == {"M1", "M2"}
+    assert client.post("/api/cases", json={"accounts": ["NOPE"], "notes": "x"}).status_code == 422
+    listed = {x["id"]: x for x in client.get("/api/cases").json()}
+    assert listed[case["id"]]["origin"] == "investigator"
+
+
 def test_pipeline_rerun_is_idempotent_and_keeps_review_history(env):
     c, _, client, _ = env
-    ids_before = [r["id"] for r in c.cases.all_rows()]
+    ids_before = sorted(r["id"] for r in c.cases.all_rows())
     statuses = {r["id"]: r["status"] for r in c.cases.all_rows()}
     run(c)
-    assert [r["id"] for r in c.cases.all_rows()] == ids_before
+    assert sorted(r["id"] for r in c.cases.all_rows()) == ids_before   # investigator cases survive too
     assert {r["id"]: r["status"] for r in c.cases.all_rows()} == statuses

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CaseOut, FactState } from "@/api/client";
 import { useAdjudicate, useFacts, useNextBestActions, useWhatIf } from "@/hooks/useApi";
-import { useUi } from "@/store/ui";
 import { Badge, Button, Card, EmptyState, ErrorState, SkeletonRows, TierBadge } from "@/components/ui/primitives";
 
 const STATES: FactState[] = ["unknown", "confirmed", "refuted"];
@@ -11,7 +10,6 @@ export function WhatIfPanel({ c }: { c: CaseOut }) {
   const nba = useNextBestActions(c.id);
   const sim = useWhatIf(c.id);
   const record = useAdjudicate(c.id);
-  const reviewer = useUi((s) => s.reviewer);
   const [state, setState] = useState<Record<string, FactState>>({});
   const [note, setNote] = useState("");
 
@@ -60,11 +58,10 @@ export function WhatIfPanel({ c }: { c: CaseOut }) {
           <label className="block text-xs text-muted" htmlFor="adj-note">Record a verified finding (requires a note; writes an audit entry)</label>
           <textarea id="adj-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="w-full rounded border border-line bg-canvas p-2 text-sm" placeholder="What was checked and how" />
           <div className="flex items-center gap-2">
-            <Button variant="primary" disabled={!changed.length || !note.trim() || !reviewer.trim() || record.isPending}
-              onClick={async () => { for (const f of changed) await record.mutateAsync({ fact: f.id, state: state[f.id]!, reviewer, note }); setNote(""); }}>
+            <Button variant="primary" disabled={!changed.length || !note.trim() || record.isPending}
+              onClick={async () => { for (const f of changed) await record.mutateAsync({ fact: f.id, state: state[f.id]!, note }); setNote(""); }}>
               Record finding{changed.length > 1 ? `s (${changed.length})` : ""}
             </Button>
-            {!reviewer.trim() && <span className="text-xs text-amber-300">Set your reviewer name in the Review panel first.</span>}
             {record.isError && <ErrorState error={record.error} />}
           </div>
         </div>

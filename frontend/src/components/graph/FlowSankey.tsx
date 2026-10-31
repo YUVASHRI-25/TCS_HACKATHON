@@ -61,7 +61,7 @@ export function FlowSankey({ data }: { data: CaseFlow }) {
         <ResponsiveContainer>
           <Sankey data={sankey} nodePadding={12} nodeWidth={8} margin={{ top: 8, right: 140, bottom: 8, left: 8 }}
             link={(p: unknown) => <FlowLink {...(p as LinkProps)} />} node={(p: unknown) => <FlowNode {...(p as NodeProps)} />}>
-            <Tooltip contentStyle={{ background: VIZ.surface, border: "1px solid #24304f", fontSize: 12 }}
+            <Tooltip contentStyle={{ background: VIZ.surface, border: "1px solid #E2E8F0", fontSize: 12 }}
               formatter={(v: number) => short(v)} />
           </Sankey>
         </ResponsiveContainer>

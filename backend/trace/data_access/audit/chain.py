@@ -43,6 +43,10 @@ class SqlAuditStore(AuditStore):
         with self.engine.connect() as c:
             return list(c.execute(select(audit_log).order_by(audit_log.c.seq)))
 
+    def all_entries(self) -> list[dict[str, Any]]:
+        return [{"seq": r.seq, "case_id": r.case_id, "ts": r.ts, "actor": r.actor, "action": r.action,
+                 "payload": json.loads(r.payload), "prev_hash": r.prev_hash, "hash": r.hash} for r in self._all()]
+
     def chain(self, case_id: str) -> list[dict[str, Any]]:
         return [{"seq": r.seq, "case_id": r.case_id, "ts": r.ts, "actor": r.actor, "action": r.action,
                  "payload": json.loads(r.payload), "prev_hash": r.prev_hash, "hash": r.hash}

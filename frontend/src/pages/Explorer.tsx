@@ -1,11 +1,47 @@
-import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { useEntitySearch, useNeighbors } from "@/hooks/useApi";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { FolderPlus } from "lucide-react";
+import { useCreateCase, useEntitySearch, useNeighbors } from "@/hooks/useApi";
 import { CaseGraph } from "@/components/graph/CaseGraph";
-import { Card, EmptyState, ErrorState, SkeletonRows } from "@/components/ui/primitives";
+import { Button, Card, EmptyState, ErrorState, SkeletonRows } from "@/components/ui/primitives";
 import type { CaseGraph as CaseGraphData } from "@/api/client";
 
 interface RawGraph { nodes: { id: string; type?: string; derived?: boolean }[]; edges: { source: string; target: string; type: string; confidence?: number }[] }
+
+function CreateCasePanel({ accounts, centre }: { accounts: string[]; centre: string }) {
+  const navigate = useNavigate();
+  const create = useCreateCase();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  useEffect(() => { setPicked(new Set(accounts.includes(centre) ? [centre] : [])); }, [accounts, centre]);
+  return (
+    <Card title="Create an investigation case from these accounts">
+      <p className="mb-2 text-xs text-muted">TRACE assembles the case from the latest analysis findings for the accounts you choose, using the same evidence and scoring rules.</p>
+      <div className="mb-3 flex max-h-32 flex-wrap gap-1.5 overflow-auto">
+        {accounts.map((a) => (
+          <label key={a} className={`flex cursor-pointer items-center gap-1 rounded border px-2 py-0.5 font-mono text-xs ${picked.has(a) ? "border-sky-500 bg-sky-500/15" : "border-line"}`}>
+            <input type="checkbox" className="accent-sky-500" checked={picked.has(a)}
+              onChange={() => setPicked((p) => { const n = new Set(p); if (n.has(a)) n.delete(a); else n.add(a); return n; })} />
+            {a.replace("account:", "")}
+          </label>
+        ))}
+        {accounts.length === 0 && <p className="text-xs text-muted">No accounts in this neighbourhood.</p>}
+      </div>
+      <div className="grid gap-2 md:grid-cols-[16rem_1fr_auto]">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Case title (optional)" aria-label="Case title"
+          className="rounded border border-line bg-canvas px-2 py-1.5 text-sm" />
+        <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Why are you opening this case? (required)" aria-label="Reason for opening the case"
+          className="rounded border border-line bg-canvas px-2 py-1.5 text-sm" />
+        <Button variant="primary" disabled={!picked.size || !notes.trim() || create.isPending}
+          onClick={() => create.mutate({ accounts: [...picked], title, notes }, { onSuccess: (c) => navigate(`/cases/${c.id}`) })}>
+          <FolderPlus className="h-4 w-4" /> Create case ({picked.size})
+        </Button>
+      </div>
+      {create.isError && <div className="mt-2"><ErrorState error={create.error} /></div>}
+    </Card>
+  );
+}
 
 export function ExplorerPage() {
   const [params, setParams] = useSearchParams();
@@ -26,9 +62,10 @@ export function ExplorerPage() {
         evidence_ids: [], confidence: e.confidence ?? null })),
     };
   }, [nb.data, node]);
+  const accounts = useMemo(() => (graph?.nodes ?? []).filter((n) => n.type === "account").map((n) => n.id).sort(), [graph]);
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
+    <div className="flex flex-col gap-4 p-6">
       <h1 className="text-lg font-semibold">Network explorer</h1>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find an entity (account, customer, device, IP…)" aria-label="Find entity"
@@ -49,12 +86,13 @@ export function ExplorerPage() {
           {search.data?.length === 0 && <li className="text-xs text-muted">No entity matches</li>}
         </ul>
       )}
-      <Card className="min-h-0 flex-1 [&>div]:h-full [&>div]:p-0">
+      <Card className="[&>div]:p-0">
         {!node && <EmptyState title="Search for an entity to explore its neighbourhood" />}
         {node && nb.isLoading && <div className="p-4"><SkeletonRows /></div>}
         {node && nb.isError && <div className="p-4"><ErrorState error={nb.error} /></div>}
-        {graph && <div className="h-[36rem]"><CaseGraph caseId="" data={graph} /></div>}
+        {graph && <div className="h-[32rem]"><CaseGraph caseId="" data={graph} /></div>}
       </Card>
+      {graph && node && <CreateCasePanel accounts={accounts} centre={node} />}
     </div>
   );
 }

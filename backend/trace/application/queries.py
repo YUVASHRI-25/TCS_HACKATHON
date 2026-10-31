@@ -133,7 +133,12 @@ def dashboard(c: Container, cap_rows: list[dict[str, Any]]) -> dict[str, Any]:
     if run:
         tx_rc = run["row_counts"].get("Transaction", {})
         kpis = {"transactions_processed": tx_rc.get("kept"), "transactions_quarantined": tx_rc.get("quarantined"),
-                "cases": len(rows), "pending_review": sum(1 for r in rows if r["status"] == "pending_review"),
+                "cases": len(rows),
+                "pending_review": sum(1 for r in rows if r["tier"] == "HIGH" and r["status"] == "open"),
+                "under_review": sum(1 for r in rows if r["status"] == "under_review"),
+                "escalated": sum(1 for r in rows if r["status"] == "escalated"),
+                "resolved": sum(1 for r in rows if r["status"] == "resolved"),
+                "investigator_cases": sum(1 for r in rows if r.get("origin") == "investigator"),
                 "exposure_surfaced": run.get("exposure_total"),
                 "accounts_in_cases": sum(r["n_members"] for r in rows),
                 "findings": sum(run.get("finding_counts", {}).values())}

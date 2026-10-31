@@ -8,7 +8,7 @@ from functools import cached_property
 import pandas as pd
 
 from trace.data_access.audit.chain import SqlAuditStore
-from trace.data_access.relational.store import SqlCaseRepository, SqlLlmAudit, make_engine
+from trace.data_access.relational.store import SqlCaseRepository, SqlDatasets, SqlLlmAudit, SqlUsers, make_engine
 from trace.infrastructure.config import TraceConfig, load_config
 from trace.infrastructure.settings import Settings, get_settings
 
@@ -31,8 +31,22 @@ class Container:
         return SqlAuditStore(self.engine)
 
     @cached_property
+    def users(self) -> SqlUsers:
+        return SqlUsers(self.engine)
+
+    @cached_property
+    def datasets(self) -> SqlDatasets:
+        return SqlDatasets(self.engine)
+
+    @cached_property
     def llm_audit(self) -> SqlLlmAudit:
         return SqlLlmAudit(self.engine)
+
+    @cached_property
+    def llm(self):
+        from trace.intelligence.llm.client import LlmClient
+        r = self.settings.llm_resolved
+        return LlmClient(r["api_key"], r["base_url"], r["model"])
 
     @property
     def config(self) -> TraceConfig:

@@ -53,10 +53,10 @@ export function CaseGraph({ caseId, data }: Props) {
       style: [
         { selector: "node", style: { "background-color": "data(color)", shape: "data(shape)" as never, width: "data(size)", height: "data(size)",
           label: "data(label)", color: VIZ.text, "font-size": 8, "text-valign": "bottom", "text-margin-y": 3, "border-width": 2, "border-color": VIZ.surface } },
-        { selector: "node.suspicious", style: { "border-color": "#ef4444", "border-width": 3 } },
+        { selector: "node.suspicious", style: { "border-color": "#DC2626", "border-width": 3 } },
         { selector: "node.derived", style: { "border-style": "dashed" } },
         { selector: "node.related", style: { opacity: 0.85 } },
-        { selector: "node:selected", style: { "border-color": "#ffffff", "border-width": 3 } },
+        { selector: "node:selected", style: { "border-color": "#172554", "border-width": 3 } },
         { selector: "edge", style: { width: 1, "line-color": VIZ.neutral, "curve-style": "bezier", opacity: 0.55 } },
         { selector: "edge.transfer", style: { "target-arrow-shape": "triangle", "target-arrow-color": VIZ.neutral, "arrow-scale": 0.6 } },
         { selector: "edge.link", style: { "line-style": "dashed" } },

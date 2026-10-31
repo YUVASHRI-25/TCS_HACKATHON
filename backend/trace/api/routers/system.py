@@ -6,6 +6,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from trace.api.deps import current_user
 from trace.api.schemas.models import CapabilityOut, Dashboard, EntityHit, Health, Metrics
 from trace.application import queries
 from trace.eval.metrics import compute
@@ -14,6 +15,7 @@ from trace.ingestion.capabilities import capability_table
 from trace.ingestion.mapping import load_mapping
 
 router = APIRouter(prefix="/api", tags=["system"])
+protected = APIRouter(prefix="/api", tags=["system"], dependencies=[Depends(current_user)])
 
 
 def _cap_rows(c: Container) -> list[dict]:
@@ -28,33 +30,33 @@ def _cap_rows(c: Container) -> list[dict]:
 def health(c: Container = Depends(get_container)):
     s = c.settings
     return {"status": "ok", "mapping_configured": not load_mapping(s.path(s.trace_mapping_path)).is_empty,
-            "pipeline_run": c.cases.latest_run() is not None, "llm_provider": s.llm_provider,
+            "pipeline_run": c.cases.latest_run() is not None, "llm_provider": (s.llm_resolved["model"] or "none") if s.llm_resolved["api_key"] else "none",
             "graph_backend": s.graph_backend}
 
 
-@router.get("/capabilities", response_model=list[CapabilityOut])
+@protected.get("/capabilities", response_model=list[CapabilityOut])
 def capabilities(c: Container = Depends(get_container)):
     return queries._caps_with_status(c.cases.latest_run(), _cap_rows(c))
 
 
-@router.get("/dashboard", response_model=Dashboard)
+@protected.get("/dashboard", response_model=Dashboard)
 def dashboard(c: Container = Depends(get_container)):
     return queries.dashboard(c, _cap_rows(c))
 
 
-@router.get("/metrics", response_model=Metrics)
+@protected.get("/metrics", response_model=Metrics)
 def metrics(c: Container = Depends(get_container)):
     run = c.cases.latest_run()
     cases = [c.cases.get(r["id"]) for r in c.cases.all_rows()] if run else []
     return compute(cases, run, c.config.detectors["tiers"])
 
 
-@router.get("/entities/search", response_model=list[EntityHit])
+@protected.get("/entities/search", response_model=list[EntityHit])
 def search(q: str = Query(min_length=1), limit: int = Query(20, le=200), c: Container = Depends(get_container)):
     return c.graph.search(q, limit)
 
 
-@router.get("/entities/{entity_id}/neighbors")
+@protected.get("/entities/{entity_id}/neighbors")
 def neighbors(entity_id: str, hops: int = Query(1, ge=1, le=3), c: Container = Depends(get_container)) -> dict:
     res = c.graph.neighbors(entity_id, hops)
     if not res["nodes"]:

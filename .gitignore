@@ -13,3 +13,5 @@ node_modules/
 frontend/dist/
 *.sqlite
 *.db
+data/uploads/
+config/detectors.overrides.yaml

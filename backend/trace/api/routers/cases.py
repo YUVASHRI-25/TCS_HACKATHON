@@ -7,15 +7,20 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from trace.api.schemas.models import (AdjudicateIn, AuditOut, CaseFlow, CaseGraph, CaseOut, CaseSummary, EvidenceDetail,
-                                      FactOut, NextBestAction, ReviewIn, ReviewOut, WhatIfIn, WhatIfOut)
+from trace.api.deps import current_user
+from trace.api.schemas.models import (AdjudicateIn, AuditOut, CaseFlow, CaseGraph, CaseOut, CaseSummary, CreateCaseIn,
+                                      EvidenceDetail, FactOut, NextBestAction, ReviewIn, ReviewOut, WhatIfIn, WhatIfOut)
+from pydantic import BaseModel, Field
+
+from trace.application import copilot, manual_case
 from trace.application import queries
 from trace.application.dossier import build_dossier
 from trace.application.review import ReviewError, adjudicate, nba, review, whatif
 from trace.domain.scoring.score import ScoringConfig
 from trace.infrastructure.container import Container, get_container
+from trace.intelligence.llm.client import LlmError
 
-router = APIRouter(prefix="/api/cases", tags=["cases"])
+router = APIRouter(prefix="/api/cases", tags=["cases"], dependencies=[Depends(current_user)])
 
 
 def _case(case_id: str, c: Container) -> dict[str, Any]:
@@ -36,7 +41,16 @@ def _scfg(c: Container) -> ScoringConfig:
 def _summary(case: dict[str, Any]) -> dict[str, Any]:
     return {"id": case["id"], "tier": case["tier"], "priority_score": case["priority_score"], "status": case["status"],
             "summary": case["summary"], "n_members": sum(1 for e in case["entities"] if e["role"] == "member"),
-            "exposure_total": case["exposure"]["total"], "finding_types": case["finding_types"]}
+            "exposure_total": case["exposure"]["total"], "finding_types": case["finding_types"],
+            "origin": case.get("origin", "pipeline"), "created_by": case.get("created_by")}
+
+
+@router.post("", response_model=CaseOut)
+def create_case(body: CreateCaseIn, user: dict = Depends(current_user), c: Container = Depends(get_container)):
+    try:
+        return manual_case.create(c, body.accounts, body.title, body.notes, user["username"])
+    except manual_case.ManualCaseError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @router.get("", response_model=list[CaseSummary])
@@ -69,9 +83,9 @@ def get_evidence(case_id: str, eid: str, c: Container = Depends(get_container)):
 
 
 @router.post("/{case_id}/review", response_model=ReviewOut)
-def post_review(case_id: str, body: ReviewIn, c: Container = Depends(get_container)):
+def post_review(case_id: str, body: ReviewIn, user: dict = Depends(current_user), c: Container = Depends(get_container)):
     try:
-        case, entry = review(_case(case_id, c), body.action, body.reviewer, body.notes, c.audit)
+        case, entry = review(_case(case_id, c), body.action, user["username"], body.notes, c.audit, body.resolution)
     except ReviewError as e:
         raise HTTPException(422, str(e)) from e
     c.cases.save(case)
@@ -112,9 +126,11 @@ def post_whatif(case_id: str, body: WhatIfIn, c: Container = Depends(get_contain
 
 
 @router.post("/{case_id}/adjudicate", response_model=CaseOut)
-def post_adjudicate(case_id: str, body: AdjudicateIn, c: Container = Depends(get_container)):
+def post_adjudicate(case_id: str, body: AdjudicateIn, user: dict = Depends(current_user),
+                    c: Container = Depends(get_container)):
     try:
-        case, _ = adjudicate(_case(case_id, c), body.fact, body.state, body.reviewer, body.note, _facts(c), _scfg(c), c.audit)
+        case, _ = adjudicate(_case(case_id, c), body.fact, body.state, user["username"], body.note, _facts(c), _scfg(c),
+                             c.audit)
     except ReviewError as e:
         raise HTTPException(422, str(e)) from e
     c.cases.save(case)
@@ -130,3 +146,20 @@ def get_nba(case_id: str, c: Container = Depends(get_container)):
 def get_llm_audit(case_id: str, c: Container = Depends(get_container)) -> list[dict[str, Any]]:
     _case(case_id, c)
     return c.llm_audit.for_case(case_id)
+
+
+class CopilotIn(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+
+
+@router.post("/{case_id}/copilot")
+def ask_copilot(case_id: str, body: CopilotIn, user: dict = Depends(current_user),
+                c: Container = Depends(get_container)) -> dict[str, Any]:
+    """LLM answer grounded in this case's evidence. 503 with the real reason when the LLM is unavailable."""
+    case = _case(case_id, c)
+    try:
+        return copilot.ask(c, case, body.question, c.llm, user["username"])
+    except LlmError as e:
+        raise HTTPException(503, f"LLM unavailable: {e}") from e
+    except copilot.CopilotError as e:
+        raise HTTPException(422, str(e)) from e

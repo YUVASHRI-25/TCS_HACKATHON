@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, unwrap, type FactState } from "@/api/client";
+import { api, unwrap, type FactState, type Schemas } from "@/api/client";
 
 export const qk = {
   health: ["health"] as const,
@@ -122,9 +122,9 @@ export function useReview(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (body: {
-      action: "confirm_for_investigation" | "reject_false_positive" | "request_more_info";
-      reviewer: string;
+      action: "start_review" | "escalate" | "resolve" | "reopen";
       notes: string;
+      resolution?: "no_further_action" | "false_positive" | "referred_for_further_investigation";
     }) => unwrap(await api.POST("/api/cases/{case_id}/review", { params: { path: { case_id: id } }, body })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["case", id] });
@@ -137,8 +137,90 @@ export function useReview(id: string) {
 export function useAdjudicate(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { fact: string; state: FactState; reviewer: string; note: string }) =>
+    mutationFn: async (body: { fact: string; state: FactState; note: string }) =>
       unwrap(await api.POST("/api/cases/{case_id}/adjudicate", { params: { path: { case_id: id } }, body })),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["case", id] }),
+  });
+}
+
+// ---------------------------------------------------------------- datasets, users, settings, activity
+export const useDatasets = () =>
+  useQuery({ queryKey: ["datasets"], queryFn: async () => unwrap(await api.GET("/api/datasets")) });
+
+export const useRuns = () =>
+  useQuery({
+    queryKey: ["runs"],
+    queryFn: async () => unwrap(await api.GET("/api/datasets/runs")),
+    // Poll only while a run is in progress.
+    refetchInterval: (q) => (q.state.data?.some((r) => r.status === "running") ? 1500 : false),
+  });
+
+export function useUpload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ name, files }: { name: string; files: File[] }) => {
+      const form = new FormData();
+      form.append("name", name);
+      files.forEach((f) => form.append("files", f));
+      // multipart body: built by hand, sent through the same authenticated client
+      const res = await api.POST("/api/datasets/upload", { body: form as never, bodySerializer: (b: unknown) => b as FormData });
+      return unwrap(res);
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["datasets"] }),
+  });
+}
+
+export function useRunDataset() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) =>
+      unwrap(await api.POST("/api/datasets/{dataset_id}/run", { params: { path: { dataset_id: id } } })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["runs"] }),
+  });
+}
+
+export const useUsers = () =>
+  useQuery({ queryKey: ["users"], queryFn: async () => unwrap(await api.GET("/api/admin/users")) });
+
+export function useCreateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { username: string; display_name: string; role: "investigator" | "admin"; password: string }) =>
+      unwrap(await api.POST("/api/admin/users", { body })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export function useUpdateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: { id: number; role?: "investigator" | "admin"; active?: boolean; password?: string }) =>
+      unwrap(await api.PATCH("/api/admin/users/{uid}", { params: { path: { uid: id } }, body })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+}
+
+export type EditableSettings = Schemas["SettingsView-Output"];
+
+export const useAdminSettings = () =>
+  useQuery({ queryKey: ["admin-settings"], queryFn: async () => unwrap(await api.GET("/api/admin/settings")) });
+
+export function useSaveSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: EditableSettings) => unwrap(await api.PUT("/api/admin/settings", { body: patch })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin-settings"] }),
+  });
+}
+
+export const useActivity = () =>
+  useQuery({ queryKey: ["activity"], queryFn: async () => unwrap(await api.GET("/api/admin/activity", { params: { query: { limit: 300 } } })) });
+
+export function useCreateCase() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { accounts: string[]; title: string; notes: string }) =>
+      unwrap(await api.POST("/api/cases", { body })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["cases"] }),
   });
 }

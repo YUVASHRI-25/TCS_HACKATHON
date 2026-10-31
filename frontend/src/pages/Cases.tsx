@@ -52,7 +52,7 @@ export function CasesPage() {
           <span className="text-muted">Status</span>
           <select value={status} onChange={(e) => set("status", e.target.value)} className="rounded border border-line bg-panel px-2 py-1">
             <option value="">All</option>
-            {["pending_review", "open", "confirmed_for_investigation", "more_info_requested", "rejected_false_positive"].map((s) => <option key={s} value={s}>{humanize(s)}</option>)}
+            {["open", "under_review", "escalated", "resolved"].map((s) => <option key={s} value={s}>{humanize(s)}</option>)}
           </select>
         </label>
         <input value={q} onChange={(e) => set("q", e.target.value)} placeholder="Filter by id or summary" aria-label="Filter cases"
@@ -79,7 +79,8 @@ export function CasesPage() {
               </thead>
               <tbody>{rows.map((c: CaseSummary) => (
                 <tr key={c.id} className="border-t border-line hover:bg-slate-700/20">
-                  <td className="px-3 py-2"><Link to={`/cases/${c.id}`} className="font-mono text-sky-300 hover:underline">{c.id}</Link></td>
+                  <td className="px-3 py-2"><Link to={`/cases/${c.id}`} className="font-mono text-sky-300 hover:underline">{c.id}</Link>
+                    {c.origin === "investigator" && <Badge tone="violet" className="ml-1">investigator</Badge>}</td>
                   <td className="px-3 py-2"><TierBadge tier={c.tier} /></td>
                   <td className="tabular px-3 py-2 text-right font-mono">{c.priority_score.toFixed(1)}</td>
                   <td className="px-3 py-2 text-xs">{humanize(c.status)}</td>

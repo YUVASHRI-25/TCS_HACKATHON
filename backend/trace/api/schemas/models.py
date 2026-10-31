@@ -174,6 +174,8 @@ class CaseSummary(BaseModel):
     n_members: int
     exposure_total: float
     finding_types: list[str]
+    origin: Literal["pipeline", "investigator"] = "pipeline"
+    created_by: str | None = None
 
 
 class CaseOut(BaseModel):
@@ -197,6 +199,11 @@ class CaseOut(BaseModel):
     finding_types: list[str]
     adjudications: dict[str, str] = {}
     adjudicated: Adjudicated | None = None
+    resolution: str | None = None
+    origin: Literal["pipeline", "investigator"] = "pipeline"
+    created_by: str | None = None
+    title: str | None = None
+    meets_case_rule: bool = True
 
 
 class GraphNode(BaseModel):
@@ -250,8 +257,14 @@ class CaseFlow(BaseModel):
 
 
 class ReviewIn(BaseModel):
-    action: Literal["confirm_for_investigation", "reject_false_positive", "request_more_info"]
-    reviewer: str = Field(min_length=1)
+    action: Literal["start_review", "escalate", "resolve", "reopen"]
+    notes: str = Field(min_length=1)
+    resolution: Literal["no_further_action", "false_positive", "referred_for_further_investigation"] | None = None
+
+
+class CreateCaseIn(BaseModel):
+    accounts: list[str] = Field(min_length=1)
+    title: str = ""
     notes: str = Field(min_length=1)
 
 
@@ -297,7 +310,6 @@ class WhatIfOut(BaseModel):
 class AdjudicateIn(BaseModel):
     fact: str
     state: Literal["unknown", "confirmed", "refuted"]
-    reviewer: str = Field(min_length=1)
     note: str = Field(min_length=1)
 
 

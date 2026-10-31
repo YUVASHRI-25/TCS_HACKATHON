@@ -26,8 +26,13 @@ class Settings(BaseSettings):
     neo4j_user: str | None = None
     neo4j_password: str | None = None
 
-    llm_provider: Literal["none", "gemini", "anthropic", "openai"] = "none"
+    llm_provider: Literal["none", "gemini", "anthropic", "openai", "openrouter"] = "none"
     llm_model: str | None = None
+    # Generic OpenAI-compatible endpoint (OpenRouter, Gemini's OpenAI endpoint, ...). Server-side only.
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    gemini_api_key: str | None = None
+    gemini_api_key_1: str | None = None
 
     gnn_backend: Literal["pyg", "node2vec"] = "node2vec"
 
@@ -41,6 +46,19 @@ class Settings(BaseSettings):
             if not p.is_absolute():
                 return prefix + (REPO_ROOT / p).as_posix()
         return v
+
+    @property
+    def llm_resolved(self) -> dict[str, str | None]:
+        """Effective LLM settings. LLM_API_KEY wins; otherwise a Gemini key selects Gemini's OpenAI-compatible API."""
+        key = self.llm_api_key
+        base = self.llm_base_url
+        model = self.llm_model
+        if not key:
+            key = self.gemini_api_key or self.gemini_api_key_1
+            if key:
+                base = base or "https://generativelanguage.googleapis.com/v1beta/openai"
+                model = model or "gemini-2.5-flash"
+        return {"api_key": key, "base_url": (base or "").rstrip("/") or None, "model": model}
 
     def path(self, p: Path) -> Path:
         return p if p.is_absolute() else REPO_ROOT / p

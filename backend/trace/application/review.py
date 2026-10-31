@@ -6,14 +6,22 @@ from typing import Any
 
 from trace.application.build_cases import score_inputs_from_case
 from trace.data_access.audit.chain import SqlAuditStore
-from trace.domain.guardrails.policy import REVIEW_ACTIONS
+from trace.domain.guardrails.policy import RESOLUTIONS, REVIEW_ACTIONS
 from trace.domain.scoring.score import ScoringConfig
 from trace.domain.whatif.recompute import next_best_actions, recompute
 
 STATUS_FOR_ACTION = {
-    "confirm_for_investigation": "confirmed_for_investigation",
-    "reject_false_positive": "rejected_false_positive",
-    "request_more_info": "more_info_requested",
+    "start_review": "under_review",
+    "escalate": "escalated",
+    "resolve": "resolved",
+    "reopen": "open",
+}
+# Allowed transitions: open -> under_review -> escalated -> resolved; resolved/escalated can be reopened.
+ALLOWED_FROM = {
+    "start_review": {"open"},
+    "escalate": {"open", "under_review"},
+    "resolve": {"open", "under_review", "escalated"},
+    "reopen": {"under_review", "escalated", "resolved"},
 }
 
 
@@ -21,17 +29,26 @@ class ReviewError(ValueError):
     pass
 
 
-def review(case: dict[str, Any], action: str, reviewer: str, notes: str, audit: SqlAuditStore) -> tuple[dict, dict]:
+def review(case: dict[str, Any], action: str, reviewer: str, notes: str, audit: SqlAuditStore,
+           resolution: str | None = None) -> tuple[dict, dict]:
     if action not in REVIEW_ACTIONS:
         raise ReviewError(f"action must be one of {REVIEW_ACTIONS}")
     if not notes or not notes.strip():
-        raise ReviewError("notes are required for every review action")
+        raise ReviewError("notes are required for every status change")
     if not reviewer or not reviewer.strip():
         raise ReviewError("reviewer is required")
-    entry = audit.append(case["id"], reviewer.strip(), action,
-                         {"notes": notes.strip(), "previous_status": case["status"],
-                          "priority_score": case["priority_score"], "tier": case["tier"]})
-    case = {**case, "status": STATUS_FOR_ACTION[action]}
+    if case["status"] not in STATUS_FOR_ACTION.values():  # status from an earlier workflow version
+        case = {**case, "status": "open"}
+    if case["status"] not in ALLOWED_FROM[action]:
+        raise ReviewError(f"cannot {action.replace('_', ' ')} a case that is {case['status'].replace('_', ' ')}")
+    if action == "resolve" and resolution not in RESOLUTIONS:
+        raise ReviewError(f"resolving requires an outcome: one of {RESOLUTIONS}")
+    payload = {"notes": notes.strip(), "previous_status": case["status"], "priority_score": case["priority_score"],
+               "tier": case["tier"]}
+    if action == "resolve":
+        payload["resolution"] = resolution
+    entry = audit.append(case["id"], reviewer.strip(), action, payload)
+    case = {**case, "status": STATUS_FOR_ACTION[action], "resolution": resolution if action == "resolve" else None}
     return case, entry
 
 
@@ -70,11 +87,12 @@ def reapply_reviews(case_dicts: list[dict[str, Any]], audit: SqlAuditStore) -> l
     """After a pipeline re-run, restore status and recorded facts from the audit log."""
     out = []
     for c in case_dicts:
-        status, adj = c["status"], {}
+        status, adj, resolution = c["status"], {}, None
         for e in audit.chain(c["id"]):
             if e["action"] in STATUS_FOR_ACTION:
                 status = STATUS_FOR_ACTION[e["action"]]
+                resolution = e["payload"].get("resolution") if e["action"] == "resolve" else None
             elif e["action"] == "adjudicate":
                 adj[e["payload"]["fact"]] = e["payload"]["state"]
-        out.append({**c, "status": status, "adjudications": adj})
+        out.append({**c, "status": status, "adjudications": adj, "resolution": resolution})
     return out

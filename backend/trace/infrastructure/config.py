@@ -46,9 +46,21 @@ def _load(p: Path) -> dict[str, Any]:
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
 
 
-def load_config(settings: Settings | None = None) -> TraceConfig:
+def overrides_path(settings: Settings | None = None) -> Path:
     s = settings or get_settings()
-    return TraceConfig(detectors=_load(s.path(s.trace_detectors_path)), catalogues=_load(s.path(s.trace_catalogues_path)))
+    p = s.path(s.trace_detectors_path)
+    return p.with_name(p.stem + ".overrides.yaml")
+
+
+def load_config(settings: Settings | None = None) -> TraceConfig:
+    from trace.application.settings_admin import merge
+
+    s = settings or get_settings()
+    det = _load(s.path(s.trace_detectors_path))
+    ov = overrides_path(s)
+    if ov.exists():
+        det = merge(det, _load(ov))
+    return TraceConfig(detectors=det, catalogues=_load(s.path(s.trace_catalogues_path)))
 
 
 def thresholds_path(settings: Settings | None = None) -> Path:
